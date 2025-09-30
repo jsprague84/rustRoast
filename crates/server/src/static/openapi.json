@@ -1,0 +1,73 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "rustRoast API", "version": "0.1.0" },
+  "paths": {
+    "/healthz": { "get": { "summary": "Liveness", "responses": { "200": {"description": "OK"} } } },
+    "/readyz": { "get": { "summary": "Readiness", "responses": { "200": {"description": "Ready"}, "503": {"description": "Not Ready"} } } },
+    "/version": { "get": { "summary": "Version", "responses": { "200": {"description": "Version", "content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}, "version": {"type": "string"}}}}}} } } },
+    "/api/devices": { "get": { "summary": "List devices", "responses": { "200": {"description": "Devices", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DevicesResponse"}}}} } } },
+    "/api/roaster/{device_id}/telemetry/latest": {
+      "get": {
+        "summary": "Latest telemetry",
+        "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Latest", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/LatestTelemetryResponse"}}}},
+          "404": {"description": "No telemetry"}
+        }
+      }
+    },
+    "/api/roaster/{device_id}/telemetry": {
+      "get": {
+        "summary": "Telemetry history",
+        "parameters": [
+          {"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "since_secs", "in": "query", "required": false, "schema": {"type": "integer", "format": "int64"}},
+          {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "format": "int32"}}
+        ],
+        "responses": {"200": {"description": "History", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/TelemetryHistoryResponse"}}}}}
+      }
+    },
+    "/api/roaster/{device_id}/control/setpoint": {
+      "post": {
+        "summary": "Set setpoint",
+        "parameters": [
+          {"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}},
+          {"name": "wait_ack", "in": "query", "required": false, "schema": {"type": "boolean"}},
+          {"name": "timeout_ms", "in": "query", "required": false, "schema": {"type": "integer", "format": "int64"}}
+        ],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/SetpointPayload"}}}},
+        "responses": {"204": {"description": "Published"}, "400": {"description": "Invalid"}, "504": {"description": "Ack timeout"}}
+      }
+    },
+    "/api/roaster/{device_id}/control/fan_pwm": {"post": {"summary": "Set fan PWM", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FanPwmPayload"}}}}, "responses": {"204": {"description": "Published"}, "400": {"description": "Invalid"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/control/heater_pwm": {"post": {"summary": "Set heater PWM", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HeaterPwmPayload"}}}}, "responses": {"204": {"description": "Published"}, "400": {"description": "Invalid"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/control/mode": {"post": {"summary": "Set control mode", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ModePayload"}}}}, "responses": {"204": {"description": "Published"}, "400": {"description": "Invalid"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/control/heater_enable": {"post": {"summary": "Enable heater", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EnablePayload"}}}}, "responses": {"204": {"description": "Published"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/control/pid": {"post": {"summary": "Set PID", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PidPayload"}}}}, "responses": {"204": {"description": "Published"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/control/emergency_stop": {"post": {"summary": "Emergency stop", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "responses": {"204": {"description": "Published"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/autotune/start": {"post": {"summary": "Start auto-tune", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/AutoTuneStartPayload"}}}}, "responses": {"204": {"description": "Published"}, "400": {"description": "Invalid"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/autotune/stop": {"post": {"summary": "Stop auto-tune", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "responses": {"204": {"description": "Published"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/autotune/apply": {"post": {"summary": "Apply auto-tune", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "wait_ack", "in": "query", "schema": {"type": "boolean"}}, {"name": "timeout_ms", "in": "query", "schema": {"type": "integer", "format": "int64"}}], "responses": {"204": {"description": "Published"}, "504": {"description": "Ack timeout"}}}},
+    "/api/roaster/{device_id}/autotune/status/latest": {"get": {"summary": "Latest auto-tune status", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Latest", "content": {"application/json": {"schema": {"type": "object"}}}}, "404": {"description": "Not found"}}}},
+    "/api/roaster/{device_id}/autotune/results/latest": {"get": {"summary": "Latest auto-tune results", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}], "responses": {"200": {"description": "Latest", "content": {"application/json": {"schema": {"type": "object"}}}}, "404": {"description": "Not found"}}}},
+    "/api/roaster/{device_id}/autotune/status": {"get": {"summary": "Auto-tune status history", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "since_secs", "in": "query", "schema": {"type": "integer", "format": "int64"}}, {"name": "limit", "in": "query", "schema": {"type": "integer", "format": "int32"}}], "responses": {"200": {"description": "History", "content": {"application/json": {"schema": {"type": "object"}}}}}}},
+    "/api/roaster/{device_id}/autotune/results": {"get": {"summary": "Auto-tune results history", "parameters": [{"name": "device_id", "in": "path", "required": true, "schema": {"type": "string"}}, {"name": "since_secs", "in": "query", "schema": {"type": "integer", "format": "int64"}}, {"name": "limit", "in": "query", "schema": {"type": "integer", "format": "int32"}}], "responses": {"200": {"description": "History", "content": {"application/json": {"schema": {"type": "object"}}}}}}}
+  },
+  "components": {
+    "schemas": {
+      "SetpointPayload": {"type": "object", "properties": {"value": {"type": "number"}}, "required": ["value"]},
+      "FanPwmPayload": {"type": "object", "properties": {"value": {"type": "integer", "minimum": 0, "maximum": 255}}, "required": ["value"]},
+      "HeaterPwmPayload": {"type": "object", "properties": {"value": {"type": "integer", "minimum": 0, "maximum": 100}}, "required": ["value"]},
+      "ModePayload": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["auto", "manual"]}}, "required": ["mode"]},
+      "EnablePayload": {"type": "object", "properties": {"enabled": {"type": "boolean"}}, "required": ["enabled"]},
+      "PidPayload": {"type": "object", "properties": {"kp": {"type": "number"}, "ki": {"type": "number"}, "kd": {"type": "number"}}, "required": ["kp", "ki", "kd"]},
+      "AutoTuneStartPayload": {"type": "object", "properties": {"target_temperature": {"type": "number"}}, "required": ["target_temperature"]},
+      "LatestTelemetryResponse": {"type": "object", "properties": {"device_id": {"type": "string"}, "timestamp": {"type": "integer", "format": "int64"}, "telemetry": {"type": "object", "additionalProperties": true}}, "required": ["device_id", "timestamp", "telemetry"]},
+      "TelemetryHistoryResponse": {"type": "object", "properties": {"device_id": {"type": "string"}, "count": {"type": "integer"}, "items": {"type": "array", "items": {"$ref": "#/components/schemas/TelemetryItem"}}}, "required": ["device_id", "count", "items"]},
+      "TelemetryItem": {"type": "object", "properties": {"ts": {"type": "integer", "format": "int64"}, "telemetry": {"type": "object", "additionalProperties": true}}, "required": ["ts", "telemetry"]},
+      "DevicesResponse": {"type": "object", "properties": {"devices": {"type": "array", "items": {"$ref": "#/components/schemas/DeviceInfo"}}}, "required": ["devices"]},
+      "DeviceInfo": {"type": "object", "properties": {"device_id": {"type": "string"}, "last_seen": {"type": "integer", "format": "int64"}, "id": {"type": "string"}, "ip": {"type": "string"}, "version": {"type": "string"}, "rssi": {"type": "integer"}, "status_raw": {"type": "object"}}, "required": ["device_id", "last_seen"]}
+    }
+  }
+}
+

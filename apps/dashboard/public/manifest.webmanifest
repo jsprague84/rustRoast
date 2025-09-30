@@ -1,0 +1,10 @@
+{
+  "name": "rustRoast Dashboard",
+  "short_name": "rustRoast",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#111827",
+  "icons": []
+}
+

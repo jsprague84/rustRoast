@@ -1,0 +1,11 @@
+[package]
+name = "rustroast-ws-smoke"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio-tungstenite = "0.21"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+url = "2"
+

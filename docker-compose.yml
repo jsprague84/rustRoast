@@ -1,0 +1,164 @@
+version: '3.8'
+
+services:
+  # MQTT Broker
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: rustroast-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./docker/mosquitto/config:/mosquitto/config
+      - ./docker/mosquitto/data:/mosquitto/data
+      - ./docker/mosquitto/log:/mosquitto/log
+    environment:
+      - MOSQUITTO_CONFIG_FILE=/mosquitto/config/mosquitto.conf
+    networks:
+      - rustroast-network
+
+  # Rust Backend Server
+  rustroast-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: rustroast-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "3001:3001"  # WebSocket
+    volumes:
+      - ./data:/app/data
+    environment:
+      - MQTT_BROKER_HOST=mosquitto
+      - MQTT_BROKER_PORT=1883
+      - RUSTROAST_DB_PATH=/app/data/rustroast.db
+      - RUST_LOG=info
+      - HTTP_PORT=3000
+      - WS_PORT=3001
+    depends_on:
+      - mosquitto
+    networks:
+      - rustroast-network
+
+  # Web Dashboard
+  rustroast-dashboard:
+    build:
+      context: ./apps/dashboard
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_BASE_URL=http://localhost:3000
+        - VITE_WS_URL=ws://localhost:3001
+    container_name: rustroast-dashboard
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - rustroast-server
+    networks:
+      - rustroast-network
+
+  # Reverse Proxy (Optional - for production)
+  nginx:
+    image: nginx:alpine
+    container_name: rustroast-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - rustroast-server
+      - rustroast-dashboard
+    networks:
+      - rustroast-network
+    profiles:
+      - production
+
+  # PostgreSQL Database (Optional - for advanced features)
+  postgres:
+    image: postgres:15-alpine
+    container_name: rustroast-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d
+    environment:
+      - POSTGRES_DB=rustroast
+      - POSTGRES_USER=rustroast
+      - POSTGRES_PASSWORD=rustroast_password
+    networks:
+      - rustroast-network
+    profiles:
+      - database
+
+  # Redis (Optional - for session management and caching)
+  redis:
+    image: redis:7-alpine
+    container_name: rustroast-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - rustroast-network
+    profiles:
+      - cache
+
+  # Grafana (Optional - for advanced monitoring)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rustroast-grafana
+    restart: unless-stopped
+    ports:
+      - "3002:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - postgres
+    networks:
+      - rustroast-network
+    profiles:
+      - monitoring
+
+  # InfluxDB (Optional - for time-series data)
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: rustroast-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    environment:
+      - INFLUXDB_DB=rustroast
+      - INFLUXDB_ADMIN_USER=admin
+      - INFLUXDB_ADMIN_PASSWORD=rustroast_password
+    networks:
+      - rustroast-network
+    profiles:
+      - timeseries
+
+volumes:
+  postgres_data:
+  redis_data:
+  grafana_data:
+  influxdb_data:
+
+networks:
+  rustroast-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
