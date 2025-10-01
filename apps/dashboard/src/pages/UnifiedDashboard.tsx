@@ -183,7 +183,7 @@ export function UnifiedDashboard({ deviceId }: Props) {
       )}
 
       {/* Main Roasting Interface */}
-      <RoastControl deviceId={deviceId} />
+      <RoastControl deviceId={deviceId} activeSession={activeSession} />
 
       {/* Quick Stats Footer */}
       <div style={{

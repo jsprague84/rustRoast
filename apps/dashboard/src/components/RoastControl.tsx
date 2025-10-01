@@ -1,9 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, RoastSession, RoastEvent, RoastEventType } from '../api/client'
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { TelemetryChart } from './TelemetryChart'
+import { ProfileDetailModal } from './ProfileDetailModal'
+import { ChartAnnotation } from './ChartAnnotations'
 
-export function RoastControl({ deviceId }: { deviceId: string }) {
+type Props = {
+  deviceId: string
+  activeSession?: RoastSession | null
+}
+
+export function RoastControl({ deviceId, activeSession }: Props) {
   const [setpoint, setSetpoint] = useState(200)
   const [fanPWM, setFanPWM] = useState(150)
   const [heaterPWM, setHeaterPWM] = useState(50)
@@ -14,6 +21,13 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
   const [profileFollowMode, setProfileFollowMode] = useState(false)
   const [roastStartTime, setRoastStartTime] = useState<number | null>(null)
   const [currentTime, setCurrentTime] = useState(Date.now())
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [markedLandmarks, setMarkedLandmarks] = useState<Array<{
+    type: string
+    time: number
+    temperature: number
+    timestamp: number
+  }>>([])
   const queryClient = useQueryClient()
 
   // Update current time every second to keep timer advancing
@@ -24,6 +38,40 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
     return () => clearInterval(interval)
   }, [])
 
+  // Map landmark types to RoastEventType
+  const landmarkToEventType = (landmarkType: string): RoastEventType => {
+    const mapping: Record<string, RoastEventType> = {
+      'DRY_END': 'drying_end',
+      'FC_START': 'first_crack_start',
+      'FC_END': 'first_crack_end',
+      'SC_START': 'second_crack_start',
+      'SC_END': 'second_crack_end',
+      'DROP': 'drop'
+    }
+    return mapping[landmarkType] || 'custom'
+  }
+
+  // Query for roast events if there's an active session
+  const { data: roastEvents = [], refetch: refetchEvents } = useQuery({
+    queryKey: ['roastEvents', activeSession?.id],
+    queryFn: () => activeSession ? api.getRoastEvents(activeSession.id) : Promise.resolve([]),
+    enabled: !!activeSession,
+    refetchInterval: 5000
+  })
+
+  // Mutation to add roast event
+  const addEventMutation = useMutation({
+    mutationFn: (params: { sessionId: string, eventType: RoastEventType, elapsedSeconds: number, temperature: number }) =>
+      api.addRoastEvent(params.sessionId, {
+        event_type: params.eventType,
+        elapsed_seconds: params.elapsedSeconds,
+        temperature: params.temperature
+      }),
+    onSuccess: () => {
+      refetchEvents()
+    }
+  })
+
   // Query for real-time telemetry data using the same pattern as AutoTune
   const { data: latestTelemetry } = useQuery({
     queryKey: ['telemetry_latest', deviceId],
@@ -31,6 +79,84 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
     refetchInterval: 1000,
     staleTime: 500
   })
+
+  // Heater enable/disable mutation (needed by markLandmark)
+  const heaterEnableMutation = useMutation({
+    mutationFn: (enabled: boolean) => api.setHeaterEnable(deviceId, enabled),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['telemetry_latest', deviceId] })
+    }
+  })
+
+  // Convert roast events to chart annotations
+  const eventAnnotations: ChartAnnotation[] = useMemo(() => {
+    if (!roastStartTime || !activeSession) return []
+
+    const eventTypeLabels: Record<RoastEventType, { label: string; emoji: string; color: string }> = {
+      'drying_end': { label: 'Dry End', emoji: '🟡', color: '#eab308' },
+      'first_crack_start': { label: 'First Crack', emoji: '🟠', color: '#f97316' },
+      'first_crack_end': { label: 'FC End', emoji: '🔸', color: '#fb923c' },
+      'second_crack_start': { label: 'Second Crack', emoji: '🔴', color: '#dc2626' },
+      'second_crack_end': { label: 'SC End', emoji: '🔺', color: '#ef4444' },
+      'drop': { label: 'Drop', emoji: '⬇️', color: '#16a34a' },
+      'development_start': { label: 'Development', emoji: '📈', color: '#8b5cf6' },
+      'drop_out': { label: 'Drop Out', emoji: '🔽', color: '#059669' },
+      'custom': { label: 'Custom', emoji: '📝', color: '#6b7280' }
+    }
+
+    return roastEvents.map(event => {
+      const info = eventTypeLabels[event.event_type] || eventTypeLabels.custom
+      const absoluteTime = (roastStartTime / 1000) + event.elapsed_seconds
+
+      return {
+        id: event.id,
+        time: absoluteTime,
+        value: event.temperature,
+        label: `${info.emoji} ${info.label}${event.temperature ? ` (${event.temperature.toFixed(1)}°C)` : ''}`,
+        color: info.color,
+        type: 'milestone' as const
+      }
+    })
+  }, [roastEvents, roastStartTime, activeSession])
+
+  // Landmark marking function
+  const markLandmark = useCallback((landmarkType: string) => {
+    if (!roastStartTime) return
+
+    const currentTemp = latestTelemetry?.telemetry?.beanTemp || 0
+    const elapsedSeconds = Math.floor((currentTime - roastStartTime) / 1000)
+
+    const landmark = {
+      type: landmarkType,
+      time: elapsedSeconds,
+      temperature: currentTemp,
+      timestamp: currentTime
+    }
+
+    setMarkedLandmarks(prev => {
+      // Remove any existing landmark of the same type
+      const filtered = prev.filter(l => l.type !== landmarkType)
+      return [...filtered, landmark].sort((a, b) => a.time - b.time)
+    })
+
+    // Save to backend if there's an active session
+    if (activeSession) {
+      const eventType = landmarkToEventType(landmarkType)
+      addEventMutation.mutate({
+        sessionId: activeSession.id,
+        eventType,
+        elapsedSeconds,
+        temperature: currentTemp
+      })
+    }
+
+    // If this is the DROP landmark, disable the heater
+    if (landmarkType === 'DROP') {
+      heaterEnableMutation.mutate(false)
+    }
+
+    console.log(`Landmark marked: ${landmarkType} at ${elapsedSeconds}s, ${currentTemp.toFixed(1)}°C`)
+  }, [roastStartTime, currentTime, latestTelemetry, activeSession, addEventMutation, heaterEnableMutation])
 
   // Query for profiles list (include both public and private)
   const { data: profiles } = useQuery({
@@ -85,13 +211,6 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
 
   const heaterPwmMutation = useMutation({
     mutationFn: (value: number) => api.setHeaterPwm(deviceId, value),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['telemetry_latest', deviceId] })
-    }
-  })
-
-  const heaterEnableMutation = useMutation({
-    mutationFn: (enabled: boolean) => api.setHeaterEnable(deviceId, enabled),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['telemetry_latest', deviceId] })
     }
@@ -891,16 +1010,36 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
           )}
 
           {selectedProfile && (
-            <div style={{
-              padding: '6px 12px',
-              backgroundColor: '#f0f9ff',
-              border: '1px solid #0ea5e9',
-              borderRadius: '6px',
-              fontSize: '12px',
-              color: '#0c4a6e'
-            }}>
-              {selectedProfile.points.length} points • Target: {selectedProfile.profile.target_end_temp}°C
-            </div>
+            <>
+              <div style={{
+                padding: '6px 12px',
+                backgroundColor: '#f0f9ff',
+                border: '1px solid #0ea5e9',
+                borderRadius: '6px',
+                fontSize: '12px',
+                color: '#0c4a6e'
+              }}>
+                {selectedProfile.points.length} points • Target: {selectedProfile.profile.target_end_temp}°C
+              </div>
+              <button
+                onClick={() => setShowProfileModal(true)}
+                style={{
+                  padding: '6px 12px',
+                  backgroundColor: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                📊 View Details
+              </button>
+            </>
           )}
         </div>
 
@@ -917,14 +1056,16 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
             profile={selectedProfile}
             sessionStartTime={roastStartTime ? roastStartTime / 1000 : undefined}
             showExportControls={false}
-            annotations={roastingStatus.isRoastActive && profileFollowMode && roastingStatus.targetTempFromProfile ? [{
-              id: 'current-profile-position',
-              type: 'vertical' as const,
-              time: roastingStatus.elapsedSeconds,
-              color: '#ef4444',
-              label: `${Math.round(roastingStatus.targetTempFromProfile)}°C target`,
-              showLabel: true
-            }] : []}
+            annotations={[
+              ...eventAnnotations,
+              ...(roastingStatus.isRoastActive && profileFollowMode && roastingStatus.targetTempFromProfile ? [{
+                id: 'current-profile-position',
+                type: 'event' as const,
+                time: (roastStartTime / 1000) + roastingStatus.elapsedSeconds,
+                color: '#ef4444',
+                label: `${Math.round(roastingStatus.targetTempFromProfile)}°C target`
+              }] : [])
+            ]}
             key={`${deviceId}-roast-chart-${selectedProfileId}-${roastStartTime}`}
           />
         </div>
@@ -987,7 +1128,10 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
               </button>
             ) : (
               <button
-                onClick={() => setRoastStartTime(null)}
+                onClick={() => {
+                  setRoastStartTime(null)
+                  setMarkedLandmarks([])
+                }}
                 style={{
                   padding: '10px 20px',
                   backgroundColor: '#ef4444',
@@ -1073,6 +1217,98 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
             </div>
           )}
         </div>
+
+        {/* Landmark Marking Buttons - Only visible during active roast */}
+        {roastingStatus.isRoastActive && (
+          <div style={{ marginTop: '20px' }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '12px'
+            }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: '600', color: '#1f2937' }}>
+                📍 Mark Roast Landmarks
+              </h3>
+              <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                Click to mark current time & temperature
+              </div>
+            </div>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: '8px',
+              marginBottom: '12px'
+            }}>
+              {[
+                { type: 'DRY_END', label: 'Dry End', emoji: '🟡', description: 'End of drying phase' },
+                { type: 'FC_START', label: 'First Crack', emoji: '🟠', description: 'First crack begins' },
+                { type: 'FC_END', label: 'FC End', emoji: '🔸', description: 'First crack ends' },
+                { type: 'SC_START', label: 'Second Crack', emoji: '🔴', description: 'Second crack begins' },
+                { type: 'SC_END', label: 'SC End', emoji: '🔺', description: 'Second crack ends' },
+                { type: 'DROP', label: 'Drop', emoji: '⬇️', description: 'Beans dropped' }
+              ].map(landmark => {
+                const isMarked = markedLandmarks.some(l => l.type === landmark.type)
+                const markedData = markedLandmarks.find(l => l.type === landmark.type)
+
+                return (
+                  <button
+                    key={landmark.type}
+                    onClick={() => markLandmark(landmark.type)}
+                    style={{
+                      padding: '8px 12px',
+                      backgroundColor: isMarked ? '#dcfce7' : '#f9fafb',
+                      color: isMarked ? '#166534' : '#374151',
+                      border: `1px solid ${isMarked ? '#16a34a' : '#d1d5db'}`,
+                      borderRadius: '6px',
+                      fontSize: '12px',
+                      fontWeight: '500',
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                      transition: 'all 0.2s ease',
+                      position: 'relative'
+                    }}
+                    title={`${landmark.description}${isMarked && markedData ? `\nMarked at: ${formatTime(markedData.time)} (${markedData.temperature.toFixed(1)}°C)` : ''}`}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                      <span>{landmark.emoji}</span>
+                      <span>{landmark.label}</span>
+                      {isMarked && <span style={{ color: '#16a34a' }}>✓</span>}
+                    </div>
+                    {isMarked && markedData && (
+                      <div style={{
+                        fontSize: '10px',
+                        color: '#166534',
+                        marginTop: '2px',
+                        lineHeight: '1.2'
+                      }}>
+                        {formatTime(markedData.time)}<br />
+                        {markedData.temperature.toFixed(1)}°C
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Marked Landmarks Summary */}
+            {markedLandmarks.length > 0 && (
+              <div style={{
+                padding: '8px 12px',
+                backgroundColor: '#f0f9ff',
+                border: '1px solid #0ea5e9',
+                borderRadius: '6px',
+                fontSize: '11px',
+                color: '#0c4a6e'
+              }}>
+                <strong>Marked:</strong> {markedLandmarks.map(l =>
+                  `${l.type.replace('_', ' ')} (${formatTime(l.time)}, ${l.temperature.toFixed(1)}°C)`
+                ).join(' • ')}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Status Messages - exactly like AutoTune */}
@@ -1170,6 +1406,14 @@ export function RoastControl({ deviceId }: { deviceId: string }) {
            pidMutation.isError ? '❌ PID parameter update failed' :
            '✅ PID parameters applied successfully'}
         </div>
+      )}
+
+      {/* Profile Detail Modal */}
+      {showProfileModal && selectedProfileId && (
+        <ProfileDetailModal
+          profileId={selectedProfileId}
+          onClose={() => setShowProfileModal(false)}
+        />
       )}
     </div>
   )

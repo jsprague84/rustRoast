@@ -111,25 +111,25 @@ export function TelemetryChart({
     const heaterPWM = t.map(p => getValue(p, 'heaterPWM'))
     
     const series: any[] = [
-      { 
-        name: 'BT', 
-        type: 'line', 
-        showSymbol: false, 
-        data: ts.map((x, i) => [x, bt[i]]), 
-        yAxisIndex: 0, 
-        smooth: 0.3, // Light smoothing for balance of performance and visuals 
-        lineStyle: { width: 2, color: '#1f77b4' },
-        itemStyle: { color: '#1f77b4' }
+      {
+        name: 'BT',
+        type: 'line',
+        showSymbol: false,
+        data: ts.map((x, i) => [x, bt[i]]),
+        yAxisIndex: 0,
+        smooth: 0.3, // Light smoothing for balance of performance and visuals
+        lineStyle: { width: 2, color: '#f59e0b' },
+        itemStyle: { color: '#f59e0b' }
       },
-      { 
-        name: 'ET', 
-        type: 'line', 
-        showSymbol: false, 
-        data: ts.map((x, i) => [x, et[i]]), 
-        yAxisIndex: 0, 
-        smooth: 0.3, // Light smoothing for balance of performance and visuals 
-        lineStyle: { width: 2, color: '#ff7f0e' },
-        itemStyle: { color: '#ff7f0e' }
+      {
+        name: 'ET',
+        type: 'line',
+        showSymbol: false,
+        data: ts.map((x, i) => [x, et[i]]),
+        yAxisIndex: 0,
+        smooth: 0.3, // Light smoothing for balance of performance and visuals
+        lineStyle: { width: 2, color: '#3b82f6' },
+        itemStyle: { color: '#3b82f6' }
       },
       { 
         name: 'Target', 
@@ -219,7 +219,12 @@ export function TelemetryChart({
     // Calculate RoR axis range
     const rorMin = phaseStats ? Math.min(-2, phaseStats.minRoR - 1) : -10
     const rorMax = phaseStats ? Math.max(20, phaseStats.maxRoR + 1) : 30
-    
+
+    // Calculate dynamic temperature axis range with padding
+    const tempValues = [...bt, ...et, ...setpoint].filter(v => v != null && v > 0)
+    const tempMin = tempValues.length > 0 ? Math.max(0, Math.floor(Math.min(...tempValues) / 10) * 10 - 10) : 0
+    const tempMax = tempValues.length > 0 ? Math.ceil(Math.max(...tempValues) / 10) * 10 + 20 : 250
+
     // Add annotations as markLine data
     const annotationMarkLines = annotations.map(annotation => ({
       xAxis: annotation.time * 1000,
@@ -333,7 +338,7 @@ export function TelemetryChart({
         max: ts.length > 0 ? Math.max(...ts) + (2 * 60 * 1000) : undefined // Add 2 minutes ahead
       },
       yAxis: [
-        { type: 'value', name: 'Temperature (°C)', min: 0, max: 250, position: 'left' },
+        { type: 'value', name: 'Temperature (°C)', min: tempMin, max: tempMax, position: 'left' },
         { type: 'value', name: 'RoR (°C/min)', position: 'right', min: rorMin, max: rorMax },
         { type: 'value', name: 'PWM %', position: 'right', offset: 60, min: 0, max: 100 }
       ],
@@ -454,11 +459,16 @@ export function TelemetryChart({
         <div className="flex items-center gap-4 flex-wrap">
           <button
             onClick={() => setShowAdvancedRoR(!showAdvancedRoR)}
-            className={`px-3 py-1 text-sm rounded ${
-              showAdvancedRoR
-                ? 'bg-purple-500 text-white'
-                : 'bg-gray-200 text-gray-700'
-            }`}
+            style={{
+              padding: '0.25rem 0.75rem',
+              fontSize: '0.875rem',
+              borderRadius: '0.25rem',
+              fontWeight: '500',
+              backgroundColor: showAdvancedRoR ? '#9333ea' : '#e5e7eb',
+              color: showAdvancedRoR ? '#ffffff' : '#1f2937',
+              border: 'none',
+              cursor: 'pointer'
+            }}
           >
             {showAdvancedRoR ? 'Artisan RoR' : 'Basic RoR'}
           </button>
