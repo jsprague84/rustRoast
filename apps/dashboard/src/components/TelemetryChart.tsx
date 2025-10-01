@@ -338,9 +338,32 @@ export function TelemetryChart({
         max: ts.length > 0 ? Math.max(...ts) + (2 * 60 * 1000) : undefined // Add 2 minutes ahead
       },
       yAxis: [
-        { type: 'value', name: 'Temperature (°C)', min: tempMin, max: tempMax, position: 'left' },
-        { type: 'value', name: 'RoR (°C/min)', position: 'right', min: rorMin, max: rorMax },
-        { type: 'value', name: 'PWM %', position: 'right', offset: 60, min: 0, max: 100 }
+        {
+          type: 'value',
+          name: 'Temp (°C)',
+          min: tempMin,
+          max: tempMax,
+          position: 'left',
+          nameTextStyle: { fontSize: 11, color: '#6b7280' }
+        },
+        {
+          type: 'value',
+          name: 'RoR',
+          position: 'right',
+          min: rorMin,
+          max: rorMax,
+          nameTextStyle: { fontSize: 11, color: '#6b7280' }
+        },
+        {
+          type: 'value',
+          name: 'PWM %',
+          position: 'right',
+          offset: 45,
+          min: 0,
+          max: 100,
+          nameTextStyle: { fontSize: 11, color: '#6b7280' },
+          splitLine: { show: false }
+        }
       ],
       series
     } as echarts.EChartsOption
@@ -534,17 +557,6 @@ export function TelemetryChart({
           )}
         </div>
       </div>
-
-      {/* Responsive Statistics */}
-      {phaseStats && showAdvancedRoR && (
-        <div className="mb-3 text-sm text-gray-600 sm:hidden">
-          <div className="flex justify-between">
-            <span>Avg: {phaseStats.overallRoR.toFixed(1)}°C/min</span>
-            <span>Max: {phaseStats.maxRoR.toFixed(1)}°C/min</span>
-            <span>Min: {phaseStats.minRoR.toFixed(1)}°C/min</span>
-          </div>
-        </div>
-      )}
 
       {/* Annotations Info */}
       {annotations.length > 0 && (

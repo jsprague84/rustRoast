@@ -16,11 +16,6 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('roast')
   const [deviceId, setDeviceId] = useState<string>('esp32_roaster_01')
   const [sessionId, setSessionId] = useState<string | null>(null)
-  const [isDark, setIsDark] = useState<boolean>(() => {
-    // Check for saved theme preference or default to false
-    const saved = localStorage.getItem('theme')
-    return saved ? saved === 'dark' : false
-  })
 
   useEffect(() => {
     // hash routing light
@@ -33,21 +28,6 @@ export default function App() {
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
-
-  useEffect(() => {
-    // Apply dark mode class to html element
-    const html = document.documentElement
-    if (isDark) {
-      html.classList.add('dark')
-    } else {
-      html.classList.remove('dark')
-    }
-    localStorage.setItem('theme', isDark ? 'dark' : 'light')
-  }, [isDark])
-
-  const toggleTheme = () => {
-    setIsDark(!isDark)
-  }
 
   const handleNavigate = (path: string, sessionIdParam?: string) => {
     if (path.startsWith('session/')) {
@@ -141,19 +121,10 @@ export default function App() {
               </a>
             </div>
           </div>
-          <div>
-            <button
-              onClick={toggleTheme}
-              className="theme-toggle"
-              aria-label="Toggle theme"
-            >
-              {isDark ? '☀️' : '🌙'}
-            </button>
-          </div>
         </div>
       </div>
     </nav>
-  ), [tab, isDark])
+  ), [tab])
 
   return (
     <NotificationProvider>
