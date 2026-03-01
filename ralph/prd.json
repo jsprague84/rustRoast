@@ -269,7 +269,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "Add to the existing settings page at src/routes/settings/+page.svelte. Load settings via the settings.get() API method in the page's load function or on mount. Use $state for the input value. Save on change using settings.set('profile_lookahead_seconds', String(value)). Follow the same input styling pattern as other settings fields on the page."
     },
     {

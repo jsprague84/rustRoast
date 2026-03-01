@@ -270,3 +270,21 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - Include markLine target values in allTemps for Y-axis bounds calculation to ensure the line is always visible on the chart
   - `autotuneState` is reactive in `$derived.by` blocks — reading `isAutotuning`, `results`, and `targetTemp` inside the derivation auto-tracks changes
 ---
+
+## 2026-03-01 - PF-010
+- What was implemented: Lookahead setting on the settings page
+  - Number input with label "Profile Lookahead (seconds)" and help text explaining the feature
+  - Range 5-60 seconds, step=1, default 20s
+  - Current value loaded from backend settings API (`settings.get()`) on mount via `$effect`
+  - Changes saved on blur or via Save button using `settings.set('profile_lookahead_seconds', value)`
+  - Value clamped to 5-60 range before saving
+  - Confirmation message "Lookahead saved." shown for 2 seconds after save
+  - Placed between API Key section and AutotunePanel on the settings page
+- Files changed:
+  - `apps/dashboard/src/routes/settings/+page.svelte` — added imports, lookahead state, load effect, saveLookahead function, lookahead input section
+- **Learnings for future iterations:**
+  - Settings page uses `$effect` with `settings.get().then()` to load values on mount — simple fire-and-forget pattern
+  - Input clamping via `Math.max(min, Math.min(max, value))` before save prevents out-of-range values even if browser validation is bypassed
+  - Consistent UX pattern on settings page: confirmation message via `$state` boolean + `setTimeout` for auto-dismiss
+  - Label `for` attribute + input `id` ensures accessibility (no a11y warnings)
+---
