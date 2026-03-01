@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api, ConfiguredDevice, ConnectionProtocol, DeviceInfo, DeviceProfile } from '../api/client'
+import { api, ConfiguredDevice, ConnectionProtocol, CreateRegisterMapEntry, DeviceInfo, DeviceProfile } from '../api/client'
 
 const STEPS = ['Device', 'Connections', 'Configuration', 'Review'] as const
 
@@ -1090,6 +1090,194 @@ function Step3Configuration({ formData, onUpdate }: {
   )
 }
 
+function ReviewSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{
+      marginBottom: '20px',
+      border: '1px solid var(--color-gray-200, #e5e7eb)',
+      borderRadius: '8px',
+      overflow: 'hidden',
+    }}>
+      <div style={{
+        padding: '12px 16px',
+        backgroundColor: 'var(--color-gray-50, #f9fafb)',
+        borderBottom: '1px solid var(--color-gray-200, #e5e7eb)',
+        fontWeight: 600,
+        fontSize: '14px',
+        color: 'var(--color-gray-800, #1f2937)',
+      }}>
+        {title}
+      </div>
+      <div style={{ padding: '16px' }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function ReviewField({ label, value }: { label: string; value: string | undefined }) {
+  if (!value) return null
+  return (
+    <div style={{ display: 'flex', marginBottom: '8px', fontSize: '14px' }}>
+      <span style={{ color: 'var(--color-gray-500, #6b7280)', minWidth: '160px', flexShrink: 0 }}>{label}:</span>
+      <span style={{ color: 'var(--color-gray-900, #111827)' }}>{value}</span>
+    </div>
+  )
+}
+
+function Step4Review({ formData, testStates, profiles, saving, saveError, onSave }: {
+  formData: WizardFormData
+  testStates: Record<ConnectionProtocol, ConnectionTestState>
+  profiles: DeviceProfile[]
+  saving: boolean
+  saveError: string | null
+  onSave: () => void
+}) {
+  const profileName = formData.profile_id
+    ? profiles.find(p => p.id === formData.profile_id)?.name || formData.profile_id
+    : 'None'
+
+  const enabledProtocols: { key: ConnectionProtocol; label: string }[] = []
+  if (formData.connections.mqtt.enabled) enabledProtocols.push({ key: 'mqtt', label: 'MQTT' })
+  if (formData.connections.websocket.enabled) enabledProtocols.push({ key: 'websocket', label: 'WebSocket' })
+  if (formData.connections.modbus_tcp.enabled) enabledProtocols.push({ key: 'modbus_tcp', label: 'Modbus TCP' })
+
+  return (
+    <div>
+      {/* Device Info */}
+      <ReviewSection title="Device Information">
+        <ReviewField label="Name" value={formData.name} />
+        <ReviewField label="Device ID" value={formData.device_id} />
+        <ReviewField label="Description" value={formData.description || undefined} />
+        <ReviewField label="Location" value={formData.location || undefined} />
+        <ReviewField label="Profile" value={profileName} />
+      </ReviewSection>
+
+      {/* Connections */}
+      <ReviewSection title="Connections">
+        {enabledProtocols.length === 0 ? (
+          <p className="text-sm text-gray-500">No connections configured</p>
+        ) : (
+          enabledProtocols.map(({ key, label }) => {
+            const testState = testStates[key]
+            const passed = testState.status === 'success'
+            return (
+              <div key={key} style={{
+                padding: '12px',
+                marginBottom: '8px',
+                border: '1px solid var(--color-gray-200, #e5e7eb)',
+                borderRadius: '6px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <span style={{ fontWeight: 600, fontSize: '14px', color: 'var(--color-gray-800, #1f2937)' }}>
+                    {label}
+                  </span>
+                  <span style={{
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    padding: '2px 8px',
+                    borderRadius: '9999px',
+                    backgroundColor: passed ? '#dcfce7' : '#fef3c7',
+                    color: passed ? '#166534' : '#92400e',
+                  }}>
+                    {passed ? 'Test passed' : 'Not tested'}
+                  </span>
+                </div>
+                {key === 'mqtt' && (
+                  <>
+                    <ReviewField label="Topic Prefix" value={formData.connections.mqtt.topic_prefix} />
+                    <ReviewField label="QoS" value={String(formData.connections.mqtt.qos)} />
+                  </>
+                )}
+                {key === 'websocket' && (
+                  <>
+                    <ReviewField label="URL" value={formData.connections.websocket.url} />
+                    <ReviewField label="Reconnect Interval" value={`${formData.connections.websocket.reconnect_interval_ms}ms`} />
+                  </>
+                )}
+                {key === 'modbus_tcp' && (
+                  <>
+                    <ReviewField label="Host" value={formData.connections.modbus_tcp.host} />
+                    <ReviewField label="Port" value={String(formData.connections.modbus_tcp.port)} />
+                    <ReviewField label="Unit ID" value={String(formData.connections.modbus_tcp.unit_id)} />
+                    <ReviewField label="Poll Interval" value={`${formData.connections.modbus_tcp.poll_interval_ms}ms`} />
+                  </>
+                )}
+              </div>
+            )
+          })
+        )}
+      </ReviewSection>
+
+      {/* Configuration */}
+      <ReviewSection title="Configuration">
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 24px' }}>
+          <div>
+            <p style={{ fontWeight: 600, fontSize: '13px', color: 'var(--color-gray-700, #374151)', marginBottom: '8px' }}>Control Defaults</p>
+            <ReviewField label="Mode" value={formData.config.control_mode} />
+            <ReviewField label="Setpoint" value={`${formData.config.default_setpoint}\u00b0C`} />
+            <ReviewField label="Fan PWM" value={String(formData.config.default_fan_pwm)} />
+          </div>
+          <div>
+            <p style={{ fontWeight: 600, fontSize: '13px', color: 'var(--color-gray-700, #374151)', marginBottom: '8px' }}>Safety Limits</p>
+            <ReviewField label="Max Temp" value={`${formData.config.max_temp}\u00b0C`} />
+            <ReviewField label="Min Fan PWM" value={String(formData.config.min_fan_pwm)} />
+          </div>
+        </div>
+        <div style={{ marginTop: '12px' }}>
+          <p style={{ fontWeight: 600, fontSize: '13px', color: 'var(--color-gray-700, #374151)', marginBottom: '8px' }}>PID Parameters</p>
+          <ReviewField label="Kp / Ki / Kd" value={`${formData.config.kp} / ${formData.config.ki} / ${formData.config.kd}`} />
+        </div>
+      </ReviewSection>
+
+      {/* Modbus Register Map */}
+      {formData.register_map.length > 0 && (
+        <ReviewSection title={`Modbus Register Map (${formData.register_map.length} registers)`}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--color-gray-200, #e5e7eb)' }}>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: 'var(--color-gray-500, #6b7280)', fontWeight: 500 }}>Address</th>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: 'var(--color-gray-500, #6b7280)', fontWeight: 500 }}>Name</th>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: 'var(--color-gray-500, #6b7280)', fontWeight: 500 }}>Type</th>
+                  <th style={{ textAlign: 'left', padding: '6px 8px', color: 'var(--color-gray-500, #6b7280)', fontWeight: 500 }}>Data Type</th>
+                  <th style={{ textAlign: 'center', padding: '6px 8px', color: 'var(--color-gray-500, #6b7280)', fontWeight: 500 }}>Writable</th>
+                </tr>
+              </thead>
+              <tbody>
+                {formData.register_map.map((reg, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--color-gray-100, #f3f4f6)' }}>
+                    <td style={{ padding: '6px 8px', fontFamily: 'monospace' }}>0x{reg.address.toString(16).padStart(4, '0').toUpperCase()}</td>
+                    <td style={{ padding: '6px 8px' }}>{reg.name}</td>
+                    <td style={{ padding: '6px 8px' }}>{reg.register_type}</td>
+                    <td style={{ padding: '6px 8px' }}>{reg.data_type}</td>
+                    <td style={{ padding: '6px 8px', textAlign: 'center' }}>{reg.writable ? 'Yes' : 'No'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </ReviewSection>
+      )}
+
+      {/* Save Error */}
+      {saveError && (
+        <div style={{
+          padding: '12px 16px',
+          marginBottom: '16px',
+          backgroundColor: '#fef2f2',
+          border: '1px solid #fecaca',
+          borderRadius: '8px',
+          color: '#991b1b',
+          fontSize: '14px',
+        }}>
+          {saveError}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function hasAnyEnabledAndTested(
   conn: ConnectionConfig,
   testStates: Record<ConnectionProtocol, ConnectionTestState>,
@@ -1136,6 +1324,10 @@ export function DeviceWizard({ initialDeviceId, onNavigate }: {
     websocket: { status: 'idle' },
     modbus_tcp: { status: 'idle' },
   })
+
+  // Save state for Step 4
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   const handleTestConnection = async (protocol: ConnectionProtocol) => {
     setConnTestStates(prev => ({
@@ -1194,6 +1386,83 @@ export function DeviceWizard({ initialDeviceId, onNavigate }: {
     queryKey: ['device-profiles'],
     queryFn: () => api.listDeviceProfiles(),
   })
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveError(null)
+
+    try {
+      // 1. Create the device
+      const device = await api.createDevice({
+        device_id: formData.device_id,
+        name: formData.name,
+        description: formData.description || undefined,
+        location: formData.location || undefined,
+        profile_id: formData.profile_id || undefined,
+      })
+
+      // 2. Add connections for each enabled protocol
+      const conn = formData.connections
+      try {
+        if (conn.mqtt.enabled) {
+          await api.addConnection(device.id, {
+            protocol: 'mqtt',
+            enabled: true,
+            config: { topic_prefix: conn.mqtt.topic_prefix, qos: conn.mqtt.qos },
+          })
+        }
+        if (conn.websocket.enabled) {
+          await api.addConnection(device.id, {
+            protocol: 'websocket',
+            enabled: true,
+            config: { url: conn.websocket.url, reconnect_interval_ms: conn.websocket.reconnect_interval_ms },
+          })
+        }
+        if (conn.modbus_tcp.enabled) {
+          await api.addConnection(device.id, {
+            protocol: 'modbus_tcp',
+            enabled: true,
+            config: { host: conn.modbus_tcp.host, port: conn.modbus_tcp.port, unit_id: conn.modbus_tcp.unit_id, poll_interval_ms: conn.modbus_tcp.poll_interval_ms },
+          })
+        }
+      } catch (err) {
+        // Device created but connection failed — redirect to edit page
+        setSaveError(`Device created but connection setup failed: ${err instanceof Error ? err.message : 'Unknown error'}. Redirecting to device edit page...`)
+        setTimeout(() => onNavigate(`devices/${device.id}`), 2000)
+        return
+      }
+
+      // 3. Set register map if Modbus was configured with registers
+      if (conn.modbus_tcp.enabled && formData.register_map.length > 0) {
+        try {
+          const entries: CreateRegisterMapEntry[] = formData.register_map.map(reg => ({
+            register_type: reg.register_type,
+            address: reg.address,
+            name: reg.name,
+            data_type: reg.data_type,
+            byte_order: reg.byte_order || undefined,
+            scale_factor: reg.scale_factor,
+            offset: reg.offset,
+            unit: reg.unit || undefined,
+            description: reg.description || undefined,
+            writable: reg.writable,
+          }))
+          await api.setRegisterMap(device.id, entries)
+        } catch (err) {
+          setSaveError(`Device and connections created but register map failed: ${err instanceof Error ? err.message : 'Unknown error'}. Redirecting to device edit page...`)
+          setTimeout(() => onNavigate(`devices/${device.id}`), 2000)
+          return
+        }
+      }
+
+      // Success — navigate to devices list
+      onNavigate('devices')
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Failed to create device')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const updateFormData = (updates: Partial<WizardFormData>) => {
     setFormData(prev => {
@@ -1264,9 +1533,14 @@ export function DeviceWizard({ initialDeviceId, onNavigate }: {
       )}
 
       {step === 3 && (
-        <div className="card" style={{ padding: '40px', textAlign: 'center' }}>
-          <p className="text-gray-500">Review &amp; save (Step 4) — coming soon</p>
-        </div>
+        <Step4Review
+          formData={formData}
+          testStates={connTestStates}
+          profiles={profiles}
+          saving={saving}
+          saveError={saveError}
+          onSave={handleSave}
+        />
       )}
 
       {/* Navigation Buttons */}
@@ -1285,6 +1559,7 @@ export function DeviceWizard({ initialDeviceId, onNavigate }: {
               setStep(s => s - 1)
             }
           }}
+          disabled={saving}
           style={{
             padding: '10px 20px',
             border: '1px solid var(--color-gray-300, #d1d5db)',
@@ -1293,25 +1568,32 @@ export function DeviceWizard({ initialDeviceId, onNavigate }: {
             color: 'var(--color-gray-700, #374151)',
             fontSize: '14px',
             fontWeight: 500,
-            cursor: 'pointer',
+            cursor: saving ? 'not-allowed' : 'pointer',
+            opacity: saving ? 0.5 : 1,
           }}
         >
           {step === 0 ? 'Cancel' : 'Back'}
         </button>
 
         <button
-          onClick={() => setStep(s => s + 1)}
-          disabled={(step === 0 && !canAdvanceStep1) || (step === 1 && !canAdvanceStep2)}
+          onClick={() => {
+            if (step === STEPS.length - 1) {
+              handleSave()
+            } else {
+              setStep(s => s + 1)
+            }
+          }}
+          disabled={(step === 0 && !canAdvanceStep1) || (step === 1 && !canAdvanceStep2) || saving}
           className="btn-primary"
           style={{
             padding: '10px 20px',
             fontSize: '14px',
             fontWeight: 500,
-            opacity: ((step === 0 && !canAdvanceStep1) || (step === 1 && !canAdvanceStep2)) ? 0.5 : 1,
-            cursor: ((step === 0 && !canAdvanceStep1) || (step === 1 && !canAdvanceStep2)) ? 'not-allowed' : 'pointer',
+            opacity: ((step === 0 && !canAdvanceStep1) || (step === 1 && !canAdvanceStep2) || saving) ? 0.5 : 1,
+            cursor: ((step === 0 && !canAdvanceStep1) || (step === 1 && !canAdvanceStep2) || saving) ? 'not-allowed' : 'pointer',
           }}
         >
-          {step === STEPS.length - 1 ? 'Save Device' : 'Next'}
+          {saving ? 'Saving...' : step === STEPS.length - 1 ? 'Save Device' : 'Next'}
         </button>
       </div>
     </div>

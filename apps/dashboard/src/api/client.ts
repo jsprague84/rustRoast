@@ -38,6 +38,13 @@ export const api = {
     body: JSON.stringify(req),
   }),
 
+  // Register Map
+  setRegisterMap: (deviceId: string, registers: CreateRegisterMapEntry[]) => j<unknown>(`/api/devices/${encodeURIComponent(deviceId)}/register-map`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(registers),
+  }),
+
   // Device Profiles
   listDeviceProfiles: () => j<DeviceProfile[]>(`/api/device-profiles`),
   // Telemetry
@@ -333,5 +340,18 @@ export type CreateConnectionRequest = {
   enabled: boolean
   priority?: number
   config: Record<string, unknown>
+}
+
+export type CreateRegisterMapEntry = {
+  register_type: string
+  address: number
+  name: string
+  data_type: string
+  byte_order?: string
+  scale_factor?: number
+  offset?: number
+  unit?: string
+  description?: string
+  writable?: boolean
 }
 
