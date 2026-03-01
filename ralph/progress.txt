@@ -155,7 +155,10 @@
 - The `api` object in `src/api/client.ts` is the single source for all API calls and type exports
 - App.tsx Tab type union controls navigation; new pages need: Tab value, nav link, ErrorBoundary wrapper, and import
 - `npm run build` (Vite) is the reliable quality check; `tsc --noEmit` has pre-existing failures due to missing type declarations
+- Shared telemetry processing: `process_incoming_telemetry()` handles cache update + DB persist + session recording for any protocol (MQTT, WebSocket, Modbus)
+- Control command routing checks `device_ws_senders` map first (for WS devices), falls back to MQTT publish
 - When adding new sub-pages under devices tab, add explicit match in handleNavigate BEFORE the generic `devices/` catch-all, AND exclude from device detail rendering condition
+- Shared constants/config data used by multiple page components goes in `src/lib/constants/` (e.g., modbus-presets.ts)
 ---
 
 ## 2026-02-28 - DEV-008
@@ -328,4 +331,47 @@
   - UnifiedDashboard no-devices state returns early before the rest of the component, keeping the happy path clean
   - CreateSessionForm device dropdown only shown when activeDevices.length > 1 (single device auto-uses the passed deviceId)
   - The activeDevices query uses staleTime: 30000 to avoid excessive refetching since device configuration changes infrequently
+---
+
+## 2026-03-01 - DEV-016
+- Created `apps/dashboard/src/lib/constants/modbus-presets.ts` with three Modbus register map presets:
+  - **rustRoast Standard**: matches the backend modbus.rs register layout (float32 temps, uint16 controls)
+  - **Artisan Compatible**: PID controller style with int16 x10 temperatures, coil registers for discrete controls
+  - **Custom (Empty)**: blank starting point for manual register definition
+- Replaced inline `DEFAULT_REGISTER_MAP` constants in both DeviceWizard.tsx and DeviceDetail.tsx with imports from the centralized presets file
+- Replaced "Load Default Map" button with a "Load Preset" dropdown in both:
+  - Wizard Step 3 register map section
+  - Device detail RegisterMapTab
+- Preset selection includes confirmation dialog if existing entries would be replaced (skipped for empty preset)
+- Exported `ModbusPreset` type for use in other components
+- Files changed:
+  - `apps/dashboard/src/lib/constants/modbus-presets.ts` — New: ModbusPreset type, RUSTROAST_STANDARD, ARTISAN_COMPATIBLE register arrays, MODBUS_PRESETS export
+  - `apps/dashboard/src/pages/DeviceWizard.tsx` — Removed inline DEFAULT_REGISTER_MAP, added MODBUS_PRESETS import, replaced handleLoadDefaultMap with handleLoadPreset, replaced button with preset dropdown select
+  - `apps/dashboard/src/pages/DeviceDetail.tsx` — Removed inline DEFAULT_REGISTER_MAP, added MODBUS_PRESETS import, replaced handleLoadDefault with handleLoadPreset, replaced button with preset dropdown select
+- **Learnings for future iterations:**
+  - The `lib/constants/` directory is a good home for shared configuration data that's used by multiple page components
+  - Using `defaultValue=""` on a select + resetting `e.target.value = ''` in onChange creates a "command" dropdown that resets after selection
+  - ModbusRegisterEntry type is exported from DeviceWizard.tsx and imported by both DeviceDetail.tsx and modbus-presets.ts
+  - The Artisan preset uses int16 with scale_factor 0.1 (values stored as x10) which is the standard convention for industrial PID controllers
+---
+
+## 2026-03-01 - DEV-017
+- Added WebSocket device telemetry endpoint at WS /ws/device/:device_id/telemetry for device-to-server communication
+- Factored telemetry processing (cache, persist, session recording) into shared `process_incoming_telemetry()` function used by both MQTT consumer and device WebSocket handler
+- Device WebSocket validates device exists and is active (returns 404/403 otherwise), endpoint is public (no API key)
+- Bidirectional communication: devices push JSON telemetry, receive control commands as JSON `{"type":"control","topic":"...","payload":"..."}`
+- Added `device_ws_senders` map to AppState: `Arc<RwLock<HashMap<String, mpsc::UnboundedSender<String>>>>` tracks WS-connected device channels
+- Modified `publish_qos1_and_maybe_wait_ack` to check `device_ws_senders` first — if device has a WS connection, control commands route via WS instead of MQTT, with MQTT fallback if WS channel is closed
+- Device WS loop uses `tokio::select!` for concurrent handling of incoming telemetry and outgoing control commands
+- Connection/disconnection logged at INFO level with device_id; cleanup removes sender from map on disconnect
+- Debounced last-seen updates (10s) per device, matching MQTT consumer pattern
+- Files changed:
+  - `crates/server/src/main.rs` — Added `device_ws_senders` to AppState, `process_incoming_telemetry()` shared function, `ws_device_telemetry` handler + `device_ws_loop`, `/ws/device/:device_id/telemetry` route, modified `publish_qos1_and_maybe_wait_ack` for WS-first routing, refactored MQTT consumer to use shared telemetry function
+- **Learnings for future iterations:**
+  - `process_incoming_telemetry` takes individual Arc'd state params rather than AppState to work with both the MQTT consumer (which has individual params) and the WS handler (which has AppState)
+  - Auto-discovery logic remains in MQTT consumer only since WS devices must be pre-registered (validation on connect)
+  - Control command routing via WS uses `parse_roaster_topic` to extract device_id from the MQTT topic format, then checks `device_ws_senders` map
+  - `mpsc::UnboundedSender` is appropriate here since control commands are infrequent and unbounded prevents blocking the control API handler
+  - The `tokio::select!` in device_ws_loop handles both directions; `socket.recv()` returns None on clean disconnect
+  - WS control message format mirrors MQTT structure: `{"type":"control","topic":"roaster/{device_id}/control/setpoint","payload":"180.0"}` so devices can parse it similarly
 ---

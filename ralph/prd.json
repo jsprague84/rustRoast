@@ -331,7 +331,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 16,
-      "passes": false,
+      "passes": true,
       "notes": "The Artisan compatible preset should follow the register addresses documented at artisan-scope.org/devices/modbus. The rustRoast Standard preset matches the register map in docs/hardware-integration-guide.md."
     },
     {
@@ -349,7 +349,7 @@
         "cargo build succeeds, cargo clippy passes"
       ],
       "priority": 17,
-      "passes": false,
+      "passes": true,
       "notes": "This provides a MQTT-free path for devices that prefer direct WebSocket communication (e.g., devices behind firewalls, browser-based simulators, or ESP32 devices using WebSocket libraries). The telemetry processing pipeline should be factored out of the MQTT handler into a shared function that both MQTT and WebSocket handlers call."
     },
     {

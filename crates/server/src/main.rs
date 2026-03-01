@@ -45,6 +45,9 @@ pub(crate) struct AppState {
     db: SqlitePool,
     session_service: RoastSessionService,
     pub(crate) device_service: DeviceService,
+    /// WebSocket control channels for devices connected via WS instead of MQTT.
+    /// Key: device_id, Value: sender for outgoing control commands.
+    device_ws_senders: Arc<RwLock<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -133,6 +136,7 @@ async fn main() {
     let db = init_db().await.expect("failed to init db");
     let session_service = RoastSessionService::new(db.clone());
     let device_service = DeviceService::new(db.clone());
+    let device_ws_senders = Arc::new(RwLock::new(HashMap::new()));
     let state = AppState {
         mqtt: mqtt.clone(),
         telemetry_cache: telemetry_cache.clone(),
@@ -143,6 +147,7 @@ async fn main() {
         autotune_results_cache: autotune_results_cache.clone(),
         session_service,
         device_service: device_service.clone(),
+        device_ws_senders,
     };
 
     // Static Swagger UI served at /docs; not generating OpenAPI from code for now
@@ -179,6 +184,8 @@ async fn main() {
         // WebSocket endpoints
         .route("/ws/telemetry", get(ws_telemetry))
         .route("/ws/debug", get(ws_debug))
+        // Device-to-server WebSocket (DEV-017): devices push telemetry, receive control commands
+        .route("/ws/device/:device_id/telemetry", get(ws_device_telemetry))
         // Test utility: emit a fake telemetry payload via MQTT to exercise WS
         .route("/api/test/emit-telemetry/:device_id", post(api_test_emit_telemetry))
         .route("/api/test/emit-status/:device_id", post(api_test_emit_status))
@@ -476,9 +483,29 @@ async fn publish_ok(state: &AppState, topic: &str, payload: impl Into<Vec<u8>>) 
 }
 
 async fn publish_qos1_and_maybe_wait_ack(state: &AppState, topic: &str, payload: impl Into<Vec<u8>>, wait_ack: bool, timeout_ms: u64) -> Response {
+    let payload_bytes: Vec<u8> = payload.into();
+
+    // Check if this is a control command for a WebSocket-connected device (DEV-017)
+    if let Some((device_id, _kind)) = parse_roaster_topic(topic) {
+        let senders = state.device_ws_senders.read().await;
+        if let Some(tx) = senders.get(&device_id) {
+            let payload_str = String::from_utf8_lossy(&payload_bytes).to_string();
+            let ws_msg = serde_json::json!({
+                "type": "control",
+                "topic": topic,
+                "payload": payload_str,
+            }).to_string();
+
+            if tx.send(ws_msg).is_ok() {
+                return StatusCode::NO_CONTENT.into_response();
+            }
+            // Fall through to MQTT if WS send fails (channel closed)
+        }
+    }
+
     // Subscribe to events before publish to reduce race window
     let mut rx = state.mqtt.events();
-    match state.mqtt.publish(topic, QoS::AtLeastOnce, false, payload).await {
+    match state.mqtt.publish(topic, QoS::AtLeastOnce, false, payload_bytes).await {
         Ok(_) => {
             state.metrics.mqtt_tx_total.inc();
             if wait_ack {
@@ -723,10 +750,6 @@ async fn mqtt_consumer_loop(
                     let now = epoch_secs();
                     if kind == "telemetry" {
                         if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&payload) {
-                            metrics.telemetry_last_seen.with_label_values(&[&device_id]).set(now as i64);
-                            // Always update telemetry cache (even for disabled devices)
-                            telemetry_cache.write().await.insert(device_id.clone(), (val, now));
-
                             // Auto-discover: if device_id is not in the devices table, create it with status 'pending'
                             let device_status = match device_service.get_device_by_device_id(&device_id).await {
                                 Ok(Some(dev)) => Some(dev.device.status),
@@ -770,6 +793,16 @@ async fn mqtt_consumer_loop(
                                 }
                             };
 
+                            // Shared telemetry processing (cache, persist, session recording)
+                            process_incoming_telemetry(
+                                &device_id,
+                                &val,
+                                device_status.as_ref(),
+                                &telemetry_cache,
+                                &metrics,
+                                &db,
+                            ).await;
+
                             // Debounced last-seen update
                             let should_update = last_seen_debounce
                                 .get(&device_id)
@@ -780,44 +813,6 @@ async fn mqtt_consumer_loop(
                                     tracing::warn!(%device_id, error = %e, "Failed to update last_seen");
                                 }
                                 last_seen_debounce.insert(device_id.clone(), std::time::Instant::now());
-                            }
-
-                            let payload_str = String::from_utf8_lossy(&payload).to_string();
-
-                            // Store in general telemetry table
-                            let _ = sqlx::query("INSERT INTO telemetry (device_id, ts, payload) VALUES (?, ?, ?)")
-                                .bind(&device_id)
-                                .bind(now as i64)
-                                .bind(&payload_str)
-                                .execute(&db)
-                                .await;
-
-                            // Skip session telemetry recording for disabled devices
-                            let is_disabled = device_status == Some(DeviceStatus::Disabled);
-                            if !is_disabled {
-                                // Store in session telemetry table for active sessions
-                                let _ = sqlx::query(r#"
-                                    INSERT INTO session_telemetry (session_id, timestamp, bean_temp, env_temp, rate_of_rise, heater_pwm, fan_pwm, setpoint)
-                                    SELECT s.id, ?,
-                                           json_extract(?, '$.beanTemp'),
-                                           json_extract(?, '$.envTemp'),
-                                           json_extract(?, '$.rateOfRise'),
-                                           json_extract(?, '$.heaterPWM'),
-                                           json_extract(?, '$.fanPWM'),
-                                           json_extract(?, '$.setpoint')
-                                    FROM roast_sessions s
-                                    WHERE s.device_id = ? AND s.status = 'active'
-                                "#)
-                                    .bind(now as i64)
-                                    .bind(&payload_str)
-                                    .bind(&payload_str)
-                                    .bind(&payload_str)
-                                    .bind(&payload_str)
-                                    .bind(&payload_str)
-                                    .bind(&payload_str)
-                                    .bind(&device_id)
-                                    .execute(&db)
-                                    .await;
                             }
                         }
                     } else if kind == "status" {
@@ -885,6 +880,167 @@ async fn mqtt_consumer_loop(
 fn epoch_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+}
+
+/// Shared telemetry processing used by both MQTT consumer and device WebSocket handler.
+/// Updates telemetry cache, persists to DB, records to active sessions.
+async fn process_incoming_telemetry(
+    device_id: &str,
+    payload: &serde_json::Value,
+    device_status: Option<&DeviceStatus>,
+    telemetry_cache: &Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
+    metrics: &Arc<Metrics>,
+    db: &SqlitePool,
+) {
+    let now = epoch_secs();
+
+    metrics.telemetry_last_seen.with_label_values(&[device_id]).set(now as i64);
+
+    // Always update telemetry cache
+    telemetry_cache.write().await.insert(device_id.to_string(), (payload.clone(), now));
+
+    let payload_str = serde_json::to_string(payload).unwrap_or_default();
+
+    // Persist to general telemetry table
+    let _ = sqlx::query("INSERT INTO telemetry (device_id, ts, payload) VALUES (?, ?, ?)")
+        .bind(device_id)
+        .bind(now as i64)
+        .bind(&payload_str)
+        .execute(db)
+        .await;
+
+    // Record to active session telemetry (skip for disabled devices)
+    let is_disabled = device_status == Some(&DeviceStatus::Disabled);
+    if !is_disabled {
+        let _ = sqlx::query(r#"
+            INSERT INTO session_telemetry (session_id, timestamp, bean_temp, env_temp, rate_of_rise, heater_pwm, fan_pwm, setpoint)
+            SELECT s.id, ?,
+                   json_extract(?, '$.beanTemp'),
+                   json_extract(?, '$.envTemp'),
+                   json_extract(?, '$.rateOfRise'),
+                   json_extract(?, '$.heaterPWM'),
+                   json_extract(?, '$.fanPWM'),
+                   json_extract(?, '$.setpoint')
+            FROM roast_sessions s
+            WHERE s.device_id = ? AND s.status = 'active'
+        "#)
+            .bind(now as i64)
+            .bind(&payload_str)
+            .bind(&payload_str)
+            .bind(&payload_str)
+            .bind(&payload_str)
+            .bind(&payload_str)
+            .bind(&payload_str)
+            .bind(device_id)
+            .execute(db)
+            .await;
+    }
+}
+
+// ----- Device WebSocket endpoint (DEV-017) -----
+
+async fn ws_device_telemetry(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    ws: WebSocketUpgrade,
+) -> Response {
+    // Validate device exists and is active
+    match state.device_service.get_device_by_device_id(&device_id).await {
+        Ok(Some(dev)) => {
+            if dev.device.status != DeviceStatus::Active {
+                return (
+                    StatusCode::FORBIDDEN,
+                    format!("Device '{}' is not active (status: {})", device_id, dev.device.status),
+                ).into_response();
+            }
+            ws.on_upgrade(move |socket| device_ws_loop(state, device_id, socket))
+                .into_response()
+        }
+        Ok(None) => {
+            (StatusCode::NOT_FOUND, format!("Device '{}' not found", device_id)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(%device_id, error = %e, "Failed to look up device for WebSocket");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response()
+        }
+    }
+}
+
+async fn device_ws_loop(state: AppState, device_id: String, mut socket: WebSocket) {
+    tracing::info!(%device_id, "Device WebSocket connected");
+
+    // Create control command channel and register sender
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    state.device_ws_senders.write().await.insert(device_id.clone(), tx);
+
+    let mut last_seen_debounce: HashMap<String, std::time::Instant> = HashMap::new();
+    let debounce_interval = std::time::Duration::from_secs(10);
+
+    loop {
+        tokio::select! {
+            // Incoming telemetry from device
+            ws_msg = socket.recv() => {
+                match ws_msg {
+                    Some(Ok(Message::Text(text))) => {
+                        match serde_json::from_str::<serde_json::Value>(&text) {
+                            Ok(val) => {
+                                // Look up device status
+                                let device_status = state.device_service
+                                    .get_device_by_device_id(&device_id).await
+                                    .ok()
+                                    .flatten()
+                                    .map(|d| d.device.status);
+
+                                process_incoming_telemetry(
+                                    &device_id,
+                                    &val,
+                                    device_status.as_ref(),
+                                    &state.telemetry_cache,
+                                    &state.metrics,
+                                    &state.db,
+                                ).await;
+
+                                // Debounced last-seen update
+                                let should_update = last_seen_debounce
+                                    .get(&device_id)
+                                    .map(|last| last.elapsed() >= debounce_interval)
+                                    .unwrap_or(true);
+                                if should_update {
+                                    let _ = state.device_service.update_last_seen(&device_id).await;
+                                    last_seen_debounce.insert(device_id.clone(), std::time::Instant::now());
+                                }
+                            }
+                            Err(_) => {
+                                tracing::warn!(%device_id, "Invalid JSON from device WebSocket");
+                            }
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        tracing::info!(%device_id, "Device WebSocket disconnected");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        tracing::warn!(%device_id, error = %e, "Device WebSocket error");
+                        break;
+                    }
+                    _ => {} // Ignore binary, ping, pong
+                }
+            }
+
+            // Outgoing control commands to device
+            Some(cmd) = rx.recv() => {
+                if socket.send(Message::Text(cmd)).await.is_err() {
+                    tracing::warn!(%device_id, "Failed to send control command via device WebSocket");
+                    break;
+                }
+            }
+        }
+    }
+
+    // Cleanup: remove sender and close socket
+    state.device_ws_senders.write().await.remove(&device_id);
+    let _ = socket.close().await;
+    tracing::info!(%device_id, "Device WebSocket cleaned up");
 }
 
 // ----- Read endpoints -----
