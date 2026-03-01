@@ -29,7 +29,7 @@ mod models;
 mod services;
 
 use models::*;
-use services::RoastSessionService;
+use services::{RoastSessionService, DeviceService};
 
 #[derive(Clone)]
 struct AppState {
@@ -41,6 +41,8 @@ struct AppState {
     metrics: Arc<Metrics>,
     db: SqlitePool,
     session_service: RoastSessionService,
+    #[allow(dead_code)] // Used by route handlers in DEV-004
+    device_service: DeviceService,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -128,6 +130,7 @@ async fn main() {
     let metrics = Metrics::new();
     let db = init_db().await.expect("failed to init db");
     let session_service = RoastSessionService::new(db.clone());
+    let device_service = DeviceService::new(db.clone());
     let state = AppState {
         mqtt: mqtt.clone(),
         telemetry_cache: telemetry_cache.clone(),
@@ -137,6 +140,7 @@ async fn main() {
         autotune_status_cache: autotune_status_cache.clone(),
         autotune_results_cache: autotune_results_cache.clone(),
         session_service,
+        device_service,
     };
 
     // Static Swagger UI served at /docs; not generating OpenAPI from code for now
@@ -1311,7 +1315,7 @@ async fn api_create_roast_event(State(state): State<AppState>, Path(session_id):
     }
 }
 
-async fn api_update_roast_event(State(state): State<AppState>, Path((session_id, event_id)): Path<(String, String)>, Json(req): Json<UpdateRoastEventRequest>) -> Response {
+async fn api_update_roast_event(State(state): State<AppState>, Path((_session_id, event_id)): Path<(String, String)>, Json(req): Json<UpdateRoastEventRequest>) -> Response {
     match state.session_service.update_roast_event(&event_id, req).await {
         Ok(event) => Json(event).into_response(),
         Err(e) => {
@@ -1321,7 +1325,7 @@ async fn api_update_roast_event(State(state): State<AppState>, Path((session_id,
     }
 }
 
-async fn api_delete_roast_event(State(state): State<AppState>, Path((session_id, event_id)): Path<(String, String)>) -> Response {
+async fn api_delete_roast_event(State(state): State<AppState>, Path((_session_id, event_id)): Path<(String, String)>) -> Response {
     match state.session_service.delete_roast_event(&event_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {

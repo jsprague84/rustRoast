@@ -122,27 +122,21 @@ impl RoastSessionService {
         
         // Build the update query with specific conditions for each field
         let mut query = "UPDATE roast_sessions SET updated_at = ?".to_string();
-        let mut bind_count = 1; // Start with 1 for updated_at
-        
+
         if req.name.is_some() {
             query.push_str(", name = ?");
-            bind_count += 1;
         }
         if req.roasted_weight.is_some() {
             query.push_str(", roasted_weight = ?");
-            bind_count += 1;
         }
         if req.notes.is_some() {
             query.push_str(", notes = ?");
-            bind_count += 1;
         }
         if req.first_crack_time.is_some() {
             query.push_str(", first_crack_time = ?");
-            bind_count += 1;
         }
         if req.development_time_ratio.is_some() {
             query.push_str(", development_time_ratio = ?");
-            bind_count += 1;
         }
         
         query.push_str(" WHERE id = ? RETURNING *");
@@ -287,9 +281,10 @@ impl RoastSessionService {
     }
 
     // Telemetry Management
-    pub async fn add_telemetry_point(&self, session_id: &str, elapsed_seconds: f32, 
-                                    bean_temp: Option<f32>, env_temp: Option<f32>, 
-                                    rate_of_rise: Option<f32>, heater_pwm: Option<i32>, 
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_telemetry_point(&self, session_id: &str, elapsed_seconds: f32,
+                                    bean_temp: Option<f32>, env_temp: Option<f32>,
+                                    rate_of_rise: Option<f32>, heater_pwm: Option<i32>,
                                     fan_pwm: Option<i32>, setpoint: Option<f32>) -> Result<()> {
         let id = Uuid::new_v4().to_string();
         
@@ -473,6 +468,7 @@ impl RoastSessionService {
     }
 
     // Utility functions
+    #[allow(dead_code)] // Used by MQTT consumer (DEV-007)
     pub async fn get_active_session(&self, device_id: &str) -> Result<Option<RoastSession>> {
         let session = sqlx::query_as::<_, RoastSession>(
             r#"
@@ -529,21 +525,17 @@ impl RoastSessionService {
 
     pub async fn update_roast_event(&self, event_id: &str, req: UpdateRoastEventRequest) -> Result<RoastEvent> {
         let mut updates = Vec::new();
-        let mut bind_count = 1; // Start with 1 for updated_at
 
         if req.elapsed_seconds.is_some() {
             updates.push("elapsed_seconds = ?".to_string());
-            bind_count += 1;
         }
 
         if req.temperature.is_some() {
             updates.push("temperature = ?".to_string());
-            bind_count += 1;
         }
 
         if req.notes.is_some() {
             updates.push("notes = ?".to_string());
-            bind_count += 1;
         }
 
         if updates.is_empty() {
@@ -717,4 +709,935 @@ fn parse_artisan_alog(content: &str) -> Result<ParsedArtisanProfile> {
         points,
         events,
     })
+}
+
+// ============================================================================
+// Device Service
+// ============================================================================
+
+#[derive(Clone)]
+#[allow(dead_code)] // Methods consumed by route handlers in DEV-004
+pub struct DeviceService {
+    db: SqlitePool,
+}
+
+#[allow(dead_code)] // Methods consumed by route handlers in DEV-004
+impl DeviceService {
+    pub fn new(db: SqlitePool) -> Self {
+        Self { db }
+    }
+
+    // ---- Device CRUD ----
+
+    pub async fn list_devices(&self, status_filter: Option<DeviceStatus>) -> Result<Vec<Device>> {
+        if let Some(status) = status_filter {
+            let devices = sqlx::query_as::<_, Device>(
+                "SELECT * FROM devices WHERE status = ? ORDER BY created_at DESC"
+            )
+            .bind(status.to_string())
+            .fetch_all(&self.db)
+            .await?;
+            Ok(devices)
+        } else {
+            let devices = sqlx::query_as::<_, Device>(
+                "SELECT * FROM devices ORDER BY created_at DESC"
+            )
+            .fetch_all(&self.db)
+            .await?;
+            Ok(devices)
+        }
+    }
+
+    pub async fn get_device(&self, id: &str) -> Result<Option<DeviceWithConnections>> {
+        let device = sqlx::query_as::<_, Device>(
+            "SELECT * FROM devices WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        let Some(device) = device else {
+            return Ok(None);
+        };
+
+        let connections = sqlx::query_as::<_, DeviceConnection>(
+            "SELECT * FROM device_connections WHERE device_id = ? ORDER BY priority DESC"
+        )
+        .bind(id)
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(Some(DeviceWithConnections { device, connections }))
+    }
+
+    pub async fn get_device_by_device_id(&self, device_id: &str) -> Result<Option<DeviceWithConnections>> {
+        let device = sqlx::query_as::<_, Device>(
+            "SELECT * FROM devices WHERE device_id = ?"
+        )
+        .bind(device_id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        let Some(device) = device else {
+            return Ok(None);
+        };
+
+        let connections = sqlx::query_as::<_, DeviceConnection>(
+            "SELECT * FROM device_connections WHERE device_id = ? ORDER BY priority DESC"
+        )
+        .bind(&device.id)
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(Some(DeviceWithConnections { device, connections }))
+    }
+
+    pub async fn create_device(&self, req: CreateDeviceRequest) -> Result<Device> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        let device = sqlx::query_as::<_, Device>(
+            r#"
+            INSERT INTO devices (id, name, device_id, profile_id, status, description, location, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING *
+            "#
+        )
+        .bind(&id)
+        .bind(&req.name)
+        .bind(&req.device_id)
+        .bind(&req.profile_id)
+        .bind(DeviceStatus::Pending.to_string())
+        .bind(&req.description)
+        .bind(&req.location)
+        .bind(now)
+        .bind(now)
+        .fetch_one(&self.db)
+        .await?;
+
+        Ok(device)
+    }
+
+    pub async fn update_device(&self, id: &str, req: UpdateDeviceRequest) -> Result<Option<Device>> {
+        if req.name.is_none() && req.profile_id.is_none() && req.status.is_none()
+           && req.description.is_none() && req.location.is_none() {
+            // Nothing to update, just return the existing device
+            let device = sqlx::query_as::<_, Device>(
+                "SELECT * FROM devices WHERE id = ?"
+            )
+            .bind(id)
+            .fetch_optional(&self.db)
+            .await?;
+            return Ok(device);
+        }
+
+        let now = Utc::now();
+        let mut query = "UPDATE devices SET updated_at = ?".to_string();
+
+        if req.name.is_some() {
+            query.push_str(", name = ?");
+        }
+        if req.profile_id.is_some() {
+            query.push_str(", profile_id = ?");
+        }
+        if req.status.is_some() {
+            query.push_str(", status = ?");
+        }
+        if req.description.is_some() {
+            query.push_str(", description = ?");
+        }
+        if req.location.is_some() {
+            query.push_str(", location = ?");
+        }
+
+        query.push_str(" WHERE id = ? RETURNING *");
+
+        let mut query_builder = sqlx::query_as::<_, Device>(&query).bind(now);
+
+        if let Some(ref name) = req.name {
+            query_builder = query_builder.bind(name);
+        }
+        if let Some(ref profile_id) = req.profile_id {
+            query_builder = query_builder.bind(profile_id);
+        }
+        if let Some(ref status) = req.status {
+            query_builder = query_builder.bind(status.to_string());
+        }
+        if let Some(ref description) = req.description {
+            query_builder = query_builder.bind(description);
+        }
+        if let Some(ref location) = req.location {
+            query_builder = query_builder.bind(location);
+        }
+
+        query_builder = query_builder.bind(id);
+
+        let device = query_builder.fetch_optional(&self.db).await?;
+        Ok(device)
+    }
+
+    pub async fn delete_device(&self, id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM devices WHERE id = ?")
+            .bind(id)
+            .execute(&self.db)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn update_device_status(&self, id: &str, status: DeviceStatus) -> Result<Option<Device>> {
+        let device = sqlx::query_as::<_, Device>(
+            "UPDATE devices SET status = ?, updated_at = ? WHERE id = ? RETURNING *"
+        )
+        .bind(status.to_string())
+        .bind(Utc::now())
+        .bind(id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(device)
+    }
+
+    pub async fn update_last_seen(&self, device_id: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE devices SET last_seen_at = ? WHERE device_id = ?"
+        )
+        .bind(Utc::now())
+        .bind(device_id)
+        .execute(&self.db)
+        .await?;
+
+        Ok(())
+    }
+
+    // ---- Device Profile CRUD ----
+
+    pub async fn list_profiles(&self) -> Result<Vec<DeviceProfile>> {
+        let profiles = sqlx::query_as::<_, DeviceProfile>(
+            "SELECT * FROM device_profiles ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(profiles)
+    }
+
+    pub async fn get_profile(&self, id: &str) -> Result<Option<DeviceProfile>> {
+        let profile = sqlx::query_as::<_, DeviceProfile>(
+            "SELECT * FROM device_profiles WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(profile)
+    }
+
+    pub async fn create_profile(&self, req: CreateDeviceProfileRequest) -> Result<DeviceProfile> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        let profile = sqlx::query_as::<_, DeviceProfile>(
+            r#"
+            INSERT INTO device_profiles (
+                id, name, description, default_control_mode, default_setpoint, default_fan_pwm,
+                default_kp, default_ki, default_kd, max_temp, min_fan_pwm, telemetry_interval_ms,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING *
+            "#
+        )
+        .bind(&id)
+        .bind(&req.name)
+        .bind(&req.description)
+        .bind(&req.default_control_mode)
+        .bind(req.default_setpoint)
+        .bind(req.default_fan_pwm)
+        .bind(req.default_kp)
+        .bind(req.default_ki)
+        .bind(req.default_kd)
+        .bind(req.max_temp)
+        .bind(req.min_fan_pwm)
+        .bind(req.telemetry_interval_ms)
+        .bind(now)
+        .bind(now)
+        .fetch_one(&self.db)
+        .await?;
+
+        Ok(profile)
+    }
+
+    pub async fn delete_profile(&self, id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM device_profiles WHERE id = ?")
+            .bind(id)
+            .execute(&self.db)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ---- Device Connection CRUD ----
+
+    pub async fn add_connection(&self, device_id: &str, req: CreateConnectionRequest) -> Result<DeviceConnection> {
+        let id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        let connection = sqlx::query_as::<_, DeviceConnection>(
+            r#"
+            INSERT INTO device_connections (id, device_id, protocol, enabled, priority, config, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING *
+            "#
+        )
+        .bind(&id)
+        .bind(device_id)
+        .bind(req.protocol.to_string())
+        .bind(req.enabled.unwrap_or(true))
+        .bind(req.priority.unwrap_or(0))
+        .bind(serde_json::to_string(&req.config)?)
+        .bind(now)
+        .bind(now)
+        .fetch_one(&self.db)
+        .await?;
+
+        Ok(connection)
+    }
+
+    pub async fn update_connection(&self, connection_id: &str, req: UpdateConnectionRequest) -> Result<Option<DeviceConnection>> {
+        if req.enabled.is_none() && req.priority.is_none() && req.config.is_none() {
+            let conn = sqlx::query_as::<_, DeviceConnection>(
+                "SELECT * FROM device_connections WHERE id = ?"
+            )
+            .bind(connection_id)
+            .fetch_optional(&self.db)
+            .await?;
+            return Ok(conn);
+        }
+
+        let now = Utc::now();
+        let mut query = "UPDATE device_connections SET updated_at = ?".to_string();
+
+        if req.enabled.is_some() {
+            query.push_str(", enabled = ?");
+        }
+        if req.priority.is_some() {
+            query.push_str(", priority = ?");
+        }
+        if req.config.is_some() {
+            query.push_str(", config = ?");
+        }
+
+        query.push_str(" WHERE id = ? RETURNING *");
+
+        let mut query_builder = sqlx::query_as::<_, DeviceConnection>(&query).bind(now);
+
+        if let Some(enabled) = req.enabled {
+            query_builder = query_builder.bind(enabled);
+        }
+        if let Some(priority) = req.priority {
+            query_builder = query_builder.bind(priority);
+        }
+        if let Some(ref config) = req.config {
+            query_builder = query_builder.bind(serde_json::to_string(config)?);
+        }
+
+        query_builder = query_builder.bind(connection_id);
+
+        let connection = query_builder.fetch_optional(&self.db).await?;
+        Ok(connection)
+    }
+
+    pub async fn remove_connection(&self, connection_id: &str) -> Result<bool> {
+        let result = sqlx::query("DELETE FROM device_connections WHERE id = ?")
+            .bind(connection_id)
+            .execute(&self.db)
+            .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ---- Register Map CRUD ----
+
+    pub async fn get_register_map(&self, device_id: &str) -> Result<Vec<ModbusRegisterMap>> {
+        let registers = sqlx::query_as::<_, ModbusRegisterMap>(
+            "SELECT * FROM modbus_register_maps WHERE device_id = ? ORDER BY register_type, address"
+        )
+        .bind(device_id)
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(registers)
+    }
+
+    pub async fn set_register_map(&self, device_id: &str, registers: Vec<CreateRegisterMapEntry>) -> Result<Vec<ModbusRegisterMap>> {
+        // Delete existing register map and insert new entries in a transaction
+        let mut tx = self.db.begin().await?;
+
+        sqlx::query("DELETE FROM modbus_register_maps WHERE device_id = ?")
+            .bind(device_id)
+            .execute(&mut *tx)
+            .await?;
+
+        let mut result = Vec::new();
+        for entry in registers {
+            let id = Uuid::new_v4().to_string();
+            let register = sqlx::query_as::<_, ModbusRegisterMap>(
+                r#"
+                INSERT INTO modbus_register_maps (
+                    id, device_id, register_type, address, name, data_type,
+                    byte_order, scale_factor, offset, unit, description, writable
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING *
+                "#
+            )
+            .bind(&id)
+            .bind(device_id)
+            .bind(entry.register_type.to_string())
+            .bind(entry.address)
+            .bind(&entry.name)
+            .bind(entry.data_type.to_string())
+            .bind(&entry.byte_order)
+            .bind(entry.scale_factor)
+            .bind(entry.offset)
+            .bind(&entry.unit)
+            .bind(&entry.description)
+            .bind(entry.writable.unwrap_or(false))
+            .fetch_one(&mut *tx)
+            .await?;
+
+            result.push(register);
+        }
+
+        tx.commit().await?;
+        Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::SqlitePool;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("Failed to create test db");
+
+        // Enable foreign keys for tests
+        sqlx::query("PRAGMA foreign_keys = ON;")
+            .execute(&pool)
+            .await
+            .expect("Failed to enable foreign keys");
+
+        // Run migrations
+        let migrations: &[&str] = &[
+            include_str!("../migrations/001_roast_sessions.sql"),
+            include_str!("../migrations/003_device_configuration.sql"),
+        ];
+        for migration_sql in migrations {
+            for statement in migration_sql.split(';') {
+                let statement = statement.trim();
+                if !statement.is_empty() {
+                    let _ = sqlx::query(statement).execute(&pool).await;
+                }
+            }
+        }
+
+        pool
+    }
+
+    // ---- Device CRUD Tests ----
+
+    #[tokio::test]
+    async fn test_create_and_get_device() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let req = CreateDeviceRequest {
+            name: "Test Roaster".to_string(),
+            device_id: "esp32-001".to_string(),
+            profile_id: None,
+            description: Some("A test device".to_string()),
+            location: Some("Kitchen".to_string()),
+        };
+
+        let device = service.create_device(req).await.expect("create_device failed");
+        assert_eq!(device.name, "Test Roaster");
+        assert_eq!(device.device_id, "esp32-001");
+        assert_eq!(device.status, DeviceStatus::Pending);
+        assert_eq!(device.description, Some("A test device".to_string()));
+        assert_eq!(device.location, Some("Kitchen".to_string()));
+
+        // Get by id
+        let fetched = service.get_device(&device.id).await.expect("get_device failed");
+        assert!(fetched.is_some());
+        let fetched = fetched.unwrap();
+        assert_eq!(fetched.device.name, "Test Roaster");
+        assert!(fetched.connections.is_empty());
+
+        // Get by device_id
+        let fetched = service.get_device_by_device_id("esp32-001").await.expect("get_device_by_device_id failed");
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().device.id, device.id);
+    }
+
+    #[tokio::test]
+    async fn test_list_devices_with_status_filter() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        // Create two devices
+        service.create_device(CreateDeviceRequest {
+            name: "Device 1".to_string(),
+            device_id: "d1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        let device2 = service.create_device(CreateDeviceRequest {
+            name: "Device 2".to_string(),
+            device_id: "d2".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        // Activate device 2
+        service.update_device_status(&device2.id, DeviceStatus::Active).await.unwrap();
+
+        // List all
+        let all = service.list_devices(None).await.unwrap();
+        assert_eq!(all.len(), 2);
+
+        // List only pending
+        let pending = service.list_devices(Some(DeviceStatus::Pending)).await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].device_id, "d1");
+
+        // List only active
+        let active = service.list_devices(Some(DeviceStatus::Active)).await.unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].device_id, "d2");
+    }
+
+    #[tokio::test]
+    async fn test_update_device() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Original".to_string(),
+            device_id: "dev1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        let updated = service.update_device(&device.id, UpdateDeviceRequest {
+            name: Some("Updated Name".to_string()),
+            profile_id: None,
+            status: Some(DeviceStatus::Active),
+            description: Some("Now with description".to_string()),
+            location: None,
+        }).await.unwrap();
+
+        assert!(updated.is_some());
+        let updated = updated.unwrap();
+        assert_eq!(updated.name, "Updated Name");
+        assert_eq!(updated.status, DeviceStatus::Active);
+        assert_eq!(updated.description, Some("Now with description".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_delete_device() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "To Delete".to_string(),
+            device_id: "del1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        assert!(service.delete_device(&device.id).await.unwrap());
+        assert!(!service.delete_device(&device.id).await.unwrap()); // Already deleted
+
+        let fetched = service.get_device(&device.id).await.unwrap();
+        assert!(fetched.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_last_seen() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Seen Device".to_string(),
+            device_id: "seen1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        assert!(device.last_seen_at.is_none());
+
+        service.update_last_seen("seen1").await.unwrap();
+
+        let fetched = service.get_device(&device.id).await.unwrap().unwrap();
+        assert!(fetched.device.last_seen_at.is_some());
+    }
+
+    // ---- Device Profile Tests ----
+
+    #[tokio::test]
+    async fn test_create_and_list_profiles() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let profile = service.create_profile(CreateDeviceProfileRequest {
+            name: "Default Profile".to_string(),
+            description: Some("Standard roasting config".to_string()),
+            default_control_mode: Some("auto".to_string()),
+            default_setpoint: Some(200.0),
+            default_fan_pwm: Some(180),
+            default_kp: Some(15.0),
+            default_ki: Some(1.0),
+            default_kd: Some(25.0),
+            max_temp: Some(240.0),
+            min_fan_pwm: Some(100),
+            telemetry_interval_ms: Some(1000),
+        }).await.unwrap();
+
+        assert_eq!(profile.name, "Default Profile");
+        assert_eq!(profile.default_setpoint, Some(200.0));
+
+        let profiles = service.list_profiles().await.unwrap();
+        assert_eq!(profiles.len(), 1);
+
+        let fetched = service.get_profile(&profile.id).await.unwrap();
+        assert!(fetched.is_some());
+        assert_eq!(fetched.unwrap().name, "Default Profile");
+    }
+
+    #[tokio::test]
+    async fn test_delete_profile() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let profile = service.create_profile(CreateDeviceProfileRequest {
+            name: "Temp Profile".to_string(),
+            description: None,
+            default_control_mode: None,
+            default_setpoint: None,
+            default_fan_pwm: None,
+            default_kp: None,
+            default_ki: None,
+            default_kd: None,
+            max_temp: None,
+            min_fan_pwm: None,
+            telemetry_interval_ms: None,
+        }).await.unwrap();
+
+        assert!(service.delete_profile(&profile.id).await.unwrap());
+        assert!(!service.delete_profile(&profile.id).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_device_with_profile() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let profile = service.create_profile(CreateDeviceProfileRequest {
+            name: "Roast Profile".to_string(),
+            description: None,
+            default_control_mode: None,
+            default_setpoint: Some(200.0),
+            default_fan_pwm: None,
+            default_kp: None,
+            default_ki: None,
+            default_kd: None,
+            max_temp: None,
+            min_fan_pwm: None,
+            telemetry_interval_ms: None,
+        }).await.unwrap();
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Profiled Device".to_string(),
+            device_id: "prof1".to_string(),
+            profile_id: Some(profile.id.clone()),
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        assert_eq!(device.profile_id, Some(profile.id));
+    }
+
+    // ---- Connection Tests ----
+
+    #[tokio::test]
+    async fn test_add_and_remove_connection() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Connected Device".to_string(),
+            device_id: "conn1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        let mqtt_config = serde_json::json!({
+            "topic_prefix": "roaster/conn1",
+            "qos": 1
+        });
+
+        let conn = service.add_connection(&device.id, CreateConnectionRequest {
+            protocol: Protocol::Mqtt,
+            enabled: Some(true),
+            priority: Some(10),
+            config: mqtt_config.clone(),
+        }).await.unwrap();
+
+        assert_eq!(conn.protocol, Protocol::Mqtt);
+        assert!(conn.enabled);
+        assert_eq!(conn.priority, 10);
+        assert_eq!(conn.config, mqtt_config);
+
+        // Verify connection shows up in device fetch
+        let fetched = service.get_device(&device.id).await.unwrap().unwrap();
+        assert_eq!(fetched.connections.len(), 1);
+
+        // Remove connection
+        assert!(service.remove_connection(&conn.id).await.unwrap());
+        assert!(!service.remove_connection(&conn.id).await.unwrap());
+
+        let fetched = service.get_device(&device.id).await.unwrap().unwrap();
+        assert!(fetched.connections.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_update_connection() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Update Conn Device".to_string(),
+            device_id: "uconn1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        let conn = service.add_connection(&device.id, CreateConnectionRequest {
+            protocol: Protocol::WebSocket,
+            enabled: Some(true),
+            priority: Some(0),
+            config: serde_json::json!({"url": "ws://10.0.0.1:8080/ws", "reconnect_interval_ms": 5000}),
+        }).await.unwrap();
+
+        let updated = service.update_connection(&conn.id, UpdateConnectionRequest {
+            enabled: Some(false),
+            priority: Some(5),
+            config: None,
+        }).await.unwrap();
+
+        assert!(updated.is_some());
+        let updated = updated.unwrap();
+        assert!(!updated.enabled);
+        assert_eq!(updated.priority, 5);
+    }
+
+    #[tokio::test]
+    async fn test_cascade_delete_connections() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Cascade Device".to_string(),
+            device_id: "casc1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        service.add_connection(&device.id, CreateConnectionRequest {
+            protocol: Protocol::Mqtt,
+            enabled: None,
+            priority: None,
+            config: serde_json::json!({"topic_prefix": "roaster/casc1", "qos": 0}),
+        }).await.unwrap();
+
+        service.add_connection(&device.id, CreateConnectionRequest {
+            protocol: Protocol::ModbusTcp,
+            enabled: None,
+            priority: None,
+            config: serde_json::json!({"host": "10.0.0.1", "port": 502, "unit_id": 1, "poll_interval_ms": 1000}),
+        }).await.unwrap();
+
+        // Delete device should cascade delete connections
+        assert!(service.delete_device(&device.id).await.unwrap());
+
+        // Connections should be gone (we can verify by trying to get the device)
+        let fetched = service.get_device(&device.id).await.unwrap();
+        assert!(fetched.is_none());
+    }
+
+    // ---- Register Map Tests ----
+
+    #[tokio::test]
+    async fn test_set_and_get_register_map() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Modbus Device".to_string(),
+            device_id: "modbus1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        let registers = vec![
+            CreateRegisterMapEntry {
+                register_type: ModbusRegisterType::Input,
+                address: 0,
+                name: "bean_temp_hi".to_string(),
+                data_type: ModbusDataType::Float32,
+                byte_order: Some("ABCD".to_string()),
+                scale_factor: Some(1.0),
+                offset: Some(0.0),
+                unit: Some("C".to_string()),
+                description: Some("Bean temperature (high word)".to_string()),
+                writable: Some(false),
+            },
+            CreateRegisterMapEntry {
+                register_type: ModbusRegisterType::Holding,
+                address: 0,
+                name: "setpoint".to_string(),
+                data_type: ModbusDataType::Float32,
+                byte_order: Some("ABCD".to_string()),
+                scale_factor: Some(1.0),
+                offset: Some(0.0),
+                unit: Some("C".to_string()),
+                description: Some("Target setpoint".to_string()),
+                writable: Some(true),
+            },
+        ];
+
+        let result = service.set_register_map(&device.id, registers).await.unwrap();
+        assert_eq!(result.len(), 2);
+
+        let fetched = service.get_register_map(&device.id).await.unwrap();
+        assert_eq!(fetched.len(), 2);
+        // Ordered by register_type, address
+        assert_eq!(fetched[0].name, "setpoint"); // holding comes before input alphabetically
+        assert_eq!(fetched[1].name, "bean_temp_hi");
+    }
+
+    #[tokio::test]
+    async fn test_set_register_map_replaces_existing() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Replace Map Device".to_string(),
+            device_id: "rmap1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        // Set initial map
+        service.set_register_map(&device.id, vec![
+            CreateRegisterMapEntry {
+                register_type: ModbusRegisterType::Input,
+                address: 0,
+                name: "old_register".to_string(),
+                data_type: ModbusDataType::Uint16,
+                byte_order: None,
+                scale_factor: None,
+                offset: None,
+                unit: None,
+                description: None,
+                writable: None,
+            },
+        ]).await.unwrap();
+
+        // Replace with new map
+        service.set_register_map(&device.id, vec![
+            CreateRegisterMapEntry {
+                register_type: ModbusRegisterType::Holding,
+                address: 0,
+                name: "new_register_1".to_string(),
+                data_type: ModbusDataType::Float32,
+                byte_order: None,
+                scale_factor: None,
+                offset: None,
+                unit: None,
+                description: None,
+                writable: None,
+            },
+            CreateRegisterMapEntry {
+                register_type: ModbusRegisterType::Holding,
+                address: 2,
+                name: "new_register_2".to_string(),
+                data_type: ModbusDataType::Uint16,
+                byte_order: None,
+                scale_factor: None,
+                offset: None,
+                unit: None,
+                description: None,
+                writable: None,
+            },
+        ]).await.unwrap();
+
+        let fetched = service.get_register_map(&device.id).await.unwrap();
+        assert_eq!(fetched.len(), 2);
+        // Old register should be gone
+        assert!(fetched.iter().all(|r| r.name != "old_register"));
+        assert!(fetched.iter().any(|r| r.name == "new_register_1"));
+        assert!(fetched.iter().any(|r| r.name == "new_register_2"));
+    }
+
+    #[tokio::test]
+    async fn test_cascade_delete_register_maps() {
+        let pool = setup_test_db().await;
+        let service = DeviceService::new(pool);
+
+        let device = service.create_device(CreateDeviceRequest {
+            name: "Cascade Reg Device".to_string(),
+            device_id: "creg1".to_string(),
+            profile_id: None,
+            description: None,
+            location: None,
+        }).await.unwrap();
+
+        service.set_register_map(&device.id, vec![
+            CreateRegisterMapEntry {
+                register_type: ModbusRegisterType::Input,
+                address: 0,
+                name: "temp".to_string(),
+                data_type: ModbusDataType::Float32,
+                byte_order: None,
+                scale_factor: None,
+                offset: None,
+                unit: None,
+                description: None,
+                writable: None,
+            },
+        ]).await.unwrap();
+
+        // Delete device should cascade delete register maps
+        service.delete_device(&device.id).await.unwrap();
+
+        // Verify register maps are gone
+        let registers = service.get_register_map(&device.id).await.unwrap();
+        assert!(registers.is_empty());
+    }
 }

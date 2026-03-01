@@ -42,7 +42,7 @@
         "cargo clippy passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "MqttConnectionConfig: { topic_prefix: String, qos: u8 }. WebSocketConnectionConfig: { url: String, reconnect_interval_ms: u64 }. ModbusTcpConnectionConfig: { host: String, port: u16, unit_id: u8, poll_interval_ms: u64 }."
     },
     {
@@ -69,7 +69,7 @@
         "cargo build succeeds, cargo test passes, cargo clippy passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "The set_register_map method should DELETE all existing maps for the device then INSERT the new ones in a transaction. This is simpler than individual add/remove operations for the register map editor."
     },
     {

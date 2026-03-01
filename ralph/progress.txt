@@ -12,6 +12,9 @@
 - Route handlers are defined in main.rs (monolithic file) — control, session, profile, telemetry handlers all inline
 - Models (request/response structs) are in models.rs with Serialize/Deserialize derives
 - Tests use in-memory SQLite with the same migration pattern
+- serde_json::Value in FromRow structs requires: sqlx `json` feature in Cargo.toml + `#[sqlx(json)]` attribute on the field
+- When binding serde_json::Value to queries, convert to string first: `serde_json::to_string(&value)?`
+- set_register_map uses a transaction: DELETE all existing + INSERT new entries for atomic replacement
 
 ---
 
@@ -25,4 +28,33 @@
   - The migration array pattern supports adding new migration files without restructuring the init_db function
   - device_profiles table must be created before devices table since devices has FK to device_profiles
   - SQLite `JSON` type is used for device_connections.config — stores protocol-specific config as serde_json::Value
+---
+
+## 2026-02-28 - DEV-002
+- Created typed Rust structs for all device-related database tables in models.rs
+- Files changed:
+  - `crates/server/src/models.rs` — Added Device, DeviceProfile, DeviceConnection, ModbusRegisterMap (FromRow structs), DeviceWithConnections (response struct), Create/Update request structs, typed config structs (MqttConnectionConfig, WebSocketConnectionConfig, ModbusTcpConnectionConfig), and enums (DeviceStatus, Protocol, ModbusRegisterType, ModbusDataType) with Display/FromStr/SQLx implementations
+- **Learnings for future iterations:**
+  - Follow the SessionStatus pattern for enum implementations: Type<sqlx::Sqlite> + Decode + Encode + Display + FromStr
+  - serde_json::Value requires the sqlx `json` feature AND `#[sqlx(json)]` attribute on the FromRow field to decode JSON columns
+  - Dead code warnings are expected for model structs before the service layer (DEV-003) consumes them
+  - DeviceProfile uses f64 for REAL columns (matching SQLite's float type), while session models use f32 — be consistent within the device configuration domain
+  - UpdateConnectionRequest is separate from CreateConnectionRequest to allow partial updates (all fields Optional)
+---
+
+## 2026-02-28 - DEV-003
+- Implemented DeviceService with full CRUD operations for devices, profiles, connections, and register maps
+- Added 14 integration tests covering all service methods including cascade deletes and transactional register map replacement
+- Files changed:
+  - `crates/server/src/services.rs` — Added DeviceService with 17 methods: list/get/create/update/delete for devices, list/get/create/delete for device profiles, add/update/remove for connections, get/set for register maps, plus update_device_status and update_last_seen. Added comprehensive test suite.
+  - `crates/server/src/main.rs` — Added DeviceService to AppState, imported DeviceService, fixed pre-existing clippy warnings (unused session_id variables)
+  - `crates/server/src/models.rs` — Added `#[sqlx(json)]` attribute to DeviceConnection.config field, added `#[allow(dead_code)]` to model structs pending route handler consumption
+  - `crates/server/Cargo.toml` — Added `json` feature to sqlx dependency for JSON column support
+- **Learnings for future iterations:**
+  - sqlx `json` feature must be added to Cargo.toml AND `#[sqlx(json)]` must be placed on the FromRow field for JSON columns
+  - When binding serde_json::Value to INSERT/UPDATE queries, serialize to string first with `serde_json::to_string(&value)?`
+  - `#[allow(dead_code)]` on a struct doesn't suppress warnings for its impl methods — must be placed on the `impl` block itself
+  - Dynamic update queries (conditional SET clauses) follow the same pattern as RoastSessionService.update_session: build query string, then bind in same order as SET clauses
+  - set_register_map should use a SQLite transaction (`self.db.begin()`) for atomic delete-then-insert replacement
+  - Pre-existing clippy issues should be fixed opportunistically to keep CI green
 ---
