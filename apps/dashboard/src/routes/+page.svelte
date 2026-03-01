@@ -2,6 +2,7 @@
 	import CurrentReadings from '$lib/components/CurrentReadings.svelte';
 	import TelemetryChart from '$lib/components/TelemetryChart.svelte';
 	import SessionControls from '$lib/components/SessionControls.svelte';
+	import FollowProfile from '$lib/components/FollowProfile.svelte';
 	import LandmarkPanel from '$lib/components/LandmarkPanel.svelte';
 	import ControlPanel from '$lib/components/ControlPanel.svelte';
 	import PidControls from '$lib/components/PidControls.svelte';
@@ -69,6 +70,7 @@
 	<!-- Sidebar: session + controls -->
 	<div class="flex w-full flex-col gap-3 lg:w-72 lg:shrink-0">
 		<SessionControls onchange={onSessionChange} />
+		<FollowProfile {activeSession} deviceId={selectedDeviceId} />
 		<LandmarkPanel {activeSession} />
 
 		<!-- Controls toggle (mobile) -->
