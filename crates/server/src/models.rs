@@ -592,7 +592,6 @@ pub struct ModbusRegisterMap {
 // ---- API response structs ----
 
 #[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)] // Used by DeviceService and route handlers (DEV-004)
 pub struct DeviceWithConnections {
     #[serde(flatten)]
     pub device: Device,
@@ -602,7 +601,6 @@ pub struct DeviceWithConnections {
 // ---- API request structs ----
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields consumed by DeviceService
 pub struct CreateDeviceRequest {
     pub name: String,
     pub device_id: String,
@@ -612,7 +610,6 @@ pub struct CreateDeviceRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields consumed by DeviceService
 pub struct UpdateDeviceRequest {
     pub name: Option<String>,
     pub profile_id: Option<String>,
@@ -622,7 +619,6 @@ pub struct UpdateDeviceRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields consumed by DeviceService
 pub struct CreateDeviceProfileRequest {
     pub name: String,
     pub description: Option<String>,
@@ -638,7 +634,7 @@ pub struct CreateDeviceProfileRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields consumed by route handlers (DEV-004)
+#[allow(dead_code)] // Used by device profile edit UI (DEV-013)
 pub struct UpdateDeviceProfileRequest {
     pub name: Option<String>,
     pub description: Option<String>,
@@ -654,7 +650,6 @@ pub struct UpdateDeviceProfileRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields consumed by DeviceService
 pub struct CreateConnectionRequest {
     pub protocol: Protocol,
     pub enabled: Option<bool>,
@@ -663,7 +658,6 @@ pub struct CreateConnectionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields consumed by DeviceService
 pub struct UpdateConnectionRequest {
     pub enabled: Option<bool>,
     pub priority: Option<i32>,
@@ -671,7 +665,6 @@ pub struct UpdateConnectionRequest {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields consumed by DeviceService
 pub struct CreateRegisterMapEntry {
     pub register_type: ModbusRegisterType,
     pub address: i32,

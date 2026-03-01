@@ -26,13 +26,15 @@ use tower_http::services::{ServeDir, ServeFile};
 use std::path::PathBuf;
 
 mod models;
+mod routes;
 mod services;
 
 use models::*;
+use routes::device_routes;
 use services::{RoastSessionService, DeviceService};
 
 #[derive(Clone)]
-struct AppState {
+pub(crate) struct AppState {
     mqtt: MqttService,
     telemetry_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
     autotune_status_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
@@ -41,8 +43,7 @@ struct AppState {
     metrics: Arc<Metrics>,
     db: SqlitePool,
     session_service: RoastSessionService,
-    #[allow(dead_code)] // Used by route handlers in DEV-004
-    device_service: DeviceService,
+    pub(crate) device_service: DeviceService,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -183,7 +184,7 @@ async fn main() {
         // Read APIs
         .route("/api/roaster/:device_id/telemetry/latest", get(api_get_latest_telemetry))
         .route("/api/roaster/:device_id/telemetry", get(api_get_telemetry_history))
-        .route("/api/devices", get(api_get_devices))
+        .route("/api/devices/registry", get(api_get_devices))
         // Auto-tune APIs
         .route("/api/roaster/:device_id/autotune/start", post(api_autotune_start))
         .route("/api/roaster/:device_id/autotune/stop", post(api_autotune_stop))
@@ -215,6 +216,8 @@ async fn main() {
         .route("/api/profiles/:id", get(api_get_profile))
         .route("/api/profiles/:id", delete(api_delete_profile))
         .route("/api/profiles/import/artisan", post(api_import_artisan_profile))
+        // Device Configuration API (DEV-004)
+        .merge(device_routes())
         .with_state(state.clone());
 
     let addr: SocketAddr = std::env::var("RUSTROAST_HTTP_ADDR")
