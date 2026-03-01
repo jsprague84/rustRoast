@@ -201,3 +201,27 @@
   - The DeviceWizard exports WizardFormData type so future step implementations (DEV-010/011/012) can extend it with additional fields
   - Discovered devices are enriched with MQTT registry data (IP, firmware, RSSI) by cross-referencing with /api/devices/registry
 ---
+
+## 2026-03-01 - DEV-010
+- Implemented Step 2 (Connection Configuration) of the device setup wizard
+- Three protocol toggle cards: MQTT, WebSocket, and Modbus TCP with enable/disable toggles
+- MQTT fields: topic prefix (auto-populated from device_id), QoS dropdown (0/1/2)
+- WebSocket fields: URL, reconnect interval
+- Modbus TCP fields: host, port, unit ID, poll interval
+- Each protocol has a "Test Connection" button calling POST /api/devices/test-connection
+- Test status: loading spinner during test, green checkmark with latency on success, red X with error on failure
+- At least one protocol must be enabled and tested successfully to advance to Step 3
+- Back button returns to Step 1 preserving form data
+- Added testConnection and addConnection API functions to client.ts
+- Added TestConnectionRequest, TestConnectionResponse, CreateConnectionRequest types
+- Connection test state lifted to parent DeviceWizard so canAdvanceStep2 gate works correctly
+- Files changed:
+  - `apps/dashboard/src/api/client.ts` — Added testConnection, addConnection API functions; TestConnectionRequest, TestConnectionResponse, CreateConnectionRequest types
+  - `apps/dashboard/src/pages/DeviceWizard.tsx` — Added ConnectionConfig, ConnectionTestState types, ProtocolCard component, Step2Connections component, handleTestConnection in parent, extended WizardFormData with connections, canAdvanceStep2 gate, MQTT topic_prefix auto-sync with device_id
+- **Learnings for future iterations:**
+  - Connection test state must be lifted to the parent (DeviceWizard) when the parent needs it for navigation gating (canAdvanceStep2); keeping it local in Step2Connections would make it invisible to the parent
+  - MQTT topic_prefix auto-sync: updateFormData detects device_id changes and updates mqtt.topic_prefix to `roaster/{device_id}` unless connections are explicitly being set
+  - The ProtocolCard component is reusable for the device detail/edit page (DEV-013) connection tab
+  - CSS spin animation is injected via a `<style>` tag inside the component since there's no global CSS injection in this React setup
+  - `npm run build` (Vite) remains the reliable quality check; ECharts chunk size warning is expected
+---

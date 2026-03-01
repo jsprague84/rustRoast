@@ -212,7 +212,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "Connection test results are stored in $state so the user sees the status without re-testing. The test-connection endpoint is separate from device creation -- we test before saving. Use lucide-svelte icons: CheckCircle2 for success, XCircle for failure, Loader2 with animate-spin for loading."
     },
     {
