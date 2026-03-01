@@ -4,7 +4,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { initTelemetrySocket, destroyTelemetrySocket, connectionStatus } from '$lib/stores/telemetry.js';
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
-	import { Gauge, ScrollText, BarChart3, Settings, Menu } from 'lucide-svelte';
+	import { Gauge, ScrollText, BarChart3, Cpu, Settings, Menu } from 'lucide-svelte';
 
 	let { children } = $props();
 	let sidebarOpen = $state(false);
@@ -21,6 +21,7 @@
 		{ href: '/', label: 'Dashboard', icon: Gauge },
 		{ href: '/sessions', label: 'Sessions', icon: ScrollText },
 		{ href: '/profiles', label: 'Profiles', icon: BarChart3 },
+		{ href: '/devices', label: 'Devices', icon: Cpu },
 		{ href: '/settings', label: 'Settings', icon: Settings }
 	];
 
