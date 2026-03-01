@@ -518,3 +518,21 @@
   - Use `invalidateAll()` from `$app/navigation` to re-run load functions after mutations (update, delete connection, etc.)
   - The `getRegisterMap` API must be called separately from the device load (not included in ConfiguredDeviceWithConnections)
 ---
+
+## 2026-03-01 - SVELTE-005
+- Implemented device profiles management page with full CRUD
+- Files created:
+  - `apps/dashboard/src/routes/devices/profiles/+page.ts` — SvelteKit load function fetching all device profiles from `/api/device-profiles`
+  - `apps/dashboard/src/routes/devices/profiles/+page.svelte` — Full profiles page with:
+    - Responsive card grid showing all profiles with name, description, key values (setpoint, mode, max temp, interval), fan/PID params as tags
+    - Inline create form with all profile fields (name, description, control mode, setpoint, fan PWM, PID Kp/Ki/Kd, max temp, min fan PWM, telemetry interval)
+    - Delete button on each card with inline confirmation (Confirm/Cancel)
+    - Empty state with Settings2 icon and prompt to create first profile
+    - Back link to /devices
+- Quality: `npm run check` — 0 errors, 0 warnings; `npm run build` — succeeds
+- **Learnings for future iterations:**
+  - The `invalidateAll()` pattern from `$app/navigation` works well for re-fetching data after mutations (create/delete)
+  - Inline delete confirmation (Confirm/Cancel buttons replacing the delete icon) is a clean pattern without modal dialogs
+  - `$derived` from `data.profiles` keeps the UI reactive when `invalidateAll()` triggers a re-load
+  - Profile summary helper function with `parts.join(' · ')` gives compact card display
+---

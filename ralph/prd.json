@@ -110,7 +110,7 @@
         "npm run build succeeds"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Use listDeviceProfiles, createDeviceProfile, deleteDeviceProfile from '$lib/api/devices.js'. Pattern for inline create form: let showForm = $state(false), toggle with button click. After create/delete, re-fetch the list by invalidating or reloading. Use invalidateAll() from '$app/navigation' after mutations, or manage local state. Profile cards should show key values in a compact format: 'Setpoint: 200C, Mode: auto, Max: 240C'."
     },
     {
