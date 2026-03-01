@@ -386,7 +386,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 19,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the pattern established in the load functions where fetch is passed as a parameter. These functions are used both in +page.ts load functions and in component event handlers."
     },
     {

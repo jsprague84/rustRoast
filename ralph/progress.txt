@@ -160,6 +160,8 @@
 - Control command routing checks `device_ws_senders` map first (for WS devices), falls back to MQTT publish
 - When adding new sub-pages under devices tab, add explicit match in handleNavigate BEFORE the generic `devices/` catch-all, AND exclude from device detail rendering condition
 - Shared constants/config data used by multiple page components goes in `src/lib/constants/` (e.g., modbus-presets.ts)
+- Domain-specific API modules go in `src/lib/api/` (e.g., devices.ts); `api/client.ts` re-exports for backwards compatibility
+- Domain-specific types go in `src/lib/types/` (e.g., device.ts, telemetry.ts)
 ---
 
 ## 2026-02-28 - DEV-008
@@ -394,4 +396,21 @@
   - `telemetry.rs` already existed with TelemetryPayload struct and parse_telemetry(); adding TelemetryService to the same file keeps all telemetry concerns co-located
   - The `mod telemetry;` declaration was missing before this story despite the file existing — it was created in a previous branch but not declared
   - `telemetry_last_seen` IntGaugeVec is cloned from Metrics and passed directly to TelemetryService, avoiding the need to make the entire Metrics struct public
+---
+
+## 2026-03-01 - DEV-019
+- Extracted device-related types and API functions from monolithic `api/client.ts` into dedicated modules
+- Created `src/lib/types/device.ts` with all device configuration TypeScript types: ConfiguredDevice, DeviceConnection, DeviceProfile, register map types, request/response types, and enums (ConfiguredDeviceStatus, ConnectionProtocol)
+- Created `src/lib/api/devices.ts` with standalone typed functions: listDevices, getDevice, createDevice, updateDevice, deleteDevice, getDiscoveredDevices, listDeviceProfiles, getDeviceProfile, createDeviceProfile, deleteDeviceProfile, addConnection, updateConnection, removeConnection, getRegisterMap, setRegisterMap, testConnection
+- Updated `api/client.ts` to re-export all types from `lib/types/device.ts` and delegate device api object methods to `lib/api/devices.ts` — preserves backwards compatibility for existing consumers
+- Files changed:
+  - `apps/dashboard/src/lib/types/device.ts` — New: all device configuration types extracted from client.ts
+  - `apps/dashboard/src/lib/api/devices.ts` — New: standalone typed API functions with own fetch helper
+  - `apps/dashboard/src/api/client.ts` — Re-exports types and functions from new modules, api object methods delegate to lib/api/devices.ts functions
+- **Learnings for future iterations:**
+  - The `lib/api/` directory is appropriate for domain-specific API modules alongside `lib/constants/` and `lib/types/`
+  - `api/client.ts` acts as a backwards-compatible facade — existing consumers continue importing from it while new code can import directly from `lib/api/devices.ts` and `lib/types/device.ts`
+  - When re-exporting functions that collide with api object method names, use aliased imports (e.g., `createDevice as createDeviceFn`) to avoid identifier conflicts
+  - The fetch helper `j<T>()` is duplicated in `lib/api/devices.ts` — a future refactor could extract it to a shared `lib/api/fetch.ts` utility
+  - PRD references to SvelteKit patterns (fetch parameter for SSR) should be adapted to React equivalents — the standalone functions use global `fetch` directly
 ---
