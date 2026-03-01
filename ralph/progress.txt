@@ -4,6 +4,8 @@
 - Frontend API client uses typed namespace objects (e.g., `settings`, `profiles`) with method functions calling `request<T>(path, options, requiresAuth?)`
 - SQLite upsert uses INSERT ... ON CONFLICT(key) DO UPDATE SET ... pattern
 - Auth is frontend-only (Bearer header via requiresAuth flag); no backend middleware yet
+- Svelte 5 rune stores use `.svelte.ts` extension with exported `$state` objects; pure functions exported separately for testability
+- Profile/chart types (`ProfileWithPoints`, `ProfilePoint`) live in `$lib/api/client.ts` — import from there
 
 # Ralph Progress Log
 Started: Sun Mar  1 05:07:32 PM CST 2026
@@ -23,4 +25,21 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - PUT handlers returning 204 use `StatusCode::NO_CONTENT.into_response()`
   - Frontend `request<void>` with 204 returns `undefined as T` (handled by the request helper)
   - Use `encodeURIComponent` on dynamic path segments in frontend API client
+---
+
+## 2026-03-01 - PF-003
+- What was implemented: Profile store with Svelte 5 runes
+  - Created `$lib/stores/profile.svelte.ts` using Svelte 5 `$state` runes
+  - Reactive state object: `profileState` with `activeProfile`, `isFollowing`, `lastSentSetpoint`
+  - Action functions: `loadProfile(id)`, `unloadProfile()`, `startFollowing()`, `stopFollowing()`
+  - Pure `interpolateTarget(points, elapsedMs, lookaheadMs)` function for linear interpolation between sorted profile points
+  - Handles boundary conditions: holds first/last point temps, returns null for empty points
+- Files changed:
+  - `apps/dashboard/src/lib/stores/profile.svelte.ts` — new file
+- **Learnings for future iterations:**
+  - Svelte 5 rune stores use `.svelte.ts` extension and export `$state` objects at module level
+  - Cannot reassign exported `$state` — use an object with mutable properties instead (e.g., `profileState.activeProfile = ...`)
+  - Pure functions (like `interpolateTarget`) should be exported separately from reactive state for testability
+  - Profile points use `time_seconds` (number) — convert to ms by multiplying by 1000 for chart compatibility
+  - Types `ProfileWithPoints` and `ProfilePoint` are defined in `$lib/api/client.ts`, not in a separate types file
 ---

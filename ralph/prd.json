@@ -54,7 +54,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Use .svelte.ts extension to enable runes outside components. Pattern: let activeProfile = $state<ProfileWithPoints | null>(null). Export as getter functions or use the module-level $state pattern. The interpolation function should be pure (no side effects) and take elapsed time in milliseconds + lookahead in milliseconds, returning target temperature. Profile points have time_seconds and target_temp fields — convert to milliseconds for chart compatibility. Sort points by time_seconds before interpolating."
     },
     {
