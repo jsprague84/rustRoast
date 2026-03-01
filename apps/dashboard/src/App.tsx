@@ -9,6 +9,7 @@ import { TestRoastControl } from './pages/TestRoastControl'
 import { Devices } from './pages/Devices'
 import { DeviceWizard } from './pages/DeviceWizard'
 import { DeviceDetail } from './pages/DeviceDetail'
+import { DeviceProfiles } from './pages/DeviceProfiles'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
 import { NotificationProvider } from './components/system/NotificationProvider'
 import { UpdatePrompt, OfflineIndicator } from './components/system/UpdatePrompt'
@@ -45,6 +46,11 @@ export default function App() {
     } else if (path === 'devices') {
       setTab('devices')
       setDeviceView(null)
+      setSessionId(null)
+      window.location.hash = 'devices'
+    } else if (path === 'devices/profiles') {
+      setTab('devices')
+      setDeviceView('devices/profiles')
       setSessionId(null)
       window.location.hash = 'devices'
     } else if (path.startsWith('devices/new')) {
@@ -177,6 +183,9 @@ export default function App() {
           </ErrorBoundary>
           <ErrorBoundary>
             {tab === 'devices' && !deviceView && <Devices onNavigate={handleNavigate} />}
+            {tab === 'devices' && deviceView === 'devices/profiles' && (
+              <DeviceProfiles onNavigate={handleNavigate} />
+            )}
             {tab === 'devices' && deviceView?.startsWith('devices/new') && (
               <DeviceWizard
                 initialDeviceId={
@@ -187,7 +196,7 @@ export default function App() {
                 onNavigate={handleNavigate}
               />
             )}
-            {tab === 'devices' && deviceView && !deviceView.startsWith('devices/new') && (
+            {tab === 'devices' && deviceView && !deviceView.startsWith('devices/new') && deviceView !== 'devices/profiles' && (
               <DeviceDetail
                 deviceId={deviceView}
                 onNavigate={handleNavigate}

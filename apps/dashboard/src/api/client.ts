@@ -61,6 +61,13 @@ export const api = {
 
   // Device Profiles
   listDeviceProfiles: () => j<DeviceProfile[]>(`/api/device-profiles`),
+  getDeviceProfile: (id: string) => j<DeviceProfile>(`/api/device-profiles/${encodeURIComponent(id)}`),
+  createDeviceProfile: (req: CreateDeviceProfileRequest) => j<DeviceProfile>(`/api/device-profiles`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  }),
+  deleteDeviceProfile: (id: string) => j<void>(`/api/device-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // Telemetry
   latestTelemetry: (deviceId: string) => j<LatestTelemetryResponse>(`/api/roaster/${encodeURIComponent(deviceId)}/telemetry/latest`),
   telemetryHistory: (deviceId: string, since_secs = 3600, limit = 300) =>
@@ -334,6 +341,20 @@ export type DeviceProfile = {
   telemetry_interval_ms?: number
   created_at: string
   updated_at: string
+}
+
+export type CreateDeviceProfileRequest = {
+  name: string
+  description?: string
+  default_control_mode?: string
+  default_setpoint?: number
+  default_fan_pwm?: number
+  default_kp?: number
+  default_ki?: number
+  default_kd?: number
+  max_temp?: number
+  min_fan_pwm?: number
+  telemetry_interval_ms?: number
 }
 
 // Connection testing types

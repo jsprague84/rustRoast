@@ -148,13 +148,33 @@ export function Devices({ onNavigate }: { onNavigate: (path: string) => void }) 
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <h1 className="m-0 text-3xl font-bold text-gray-900">Devices</h1>
-        <button
-          onClick={() => onNavigate('devices/new')}
-          className="btn-primary flex items-center gap-2"
-        >
-          <span style={{ fontSize: '16px' }}>+</span>
-          Add Device
-        </button>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            onClick={() => onNavigate('devices/profiles')}
+            style={{
+              padding: '10px 20px',
+              backgroundColor: '#6b7280',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '14px',
+              fontWeight: '500',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+            }}
+          >
+            Device Profiles
+          </button>
+          <button
+            onClick={() => onNavigate('devices/new')}
+            className="btn-primary flex items-center gap-2"
+          >
+            <span style={{ fontSize: '16px' }}>+</span>
+            Add Device
+          </button>
+        </div>
       </div>
 
       {/* Pending / Discovered Devices */}
