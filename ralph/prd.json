@@ -132,7 +132,7 @@
         "npm run build succeeds"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "The main dashboard is at src/routes/+page.svelte. The DeviceSelector should be a standalone component that other pages can import too. Use $state for the selected value. To fetch devices, call listDevices from '$lib/api/devices.js' in an onMount or use a small store. The telemetry WebSocket store at src/lib/stores/telemetry.ts currently connects without device filtering — the selector should pass the device_id to the store's init function if the store supports it, otherwise just display it for now. sessionStorage access: if (typeof window !== 'undefined') sessionStorage.getItem/setItem."
     }
   ]

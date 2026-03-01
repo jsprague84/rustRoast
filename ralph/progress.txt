@@ -536,3 +536,15 @@
   - `$derived` from `data.profiles` keeps the UI reactive when `invalidateAll()` triggers a re-load
   - Profile summary helper function with `parts.join(' · ')` gives compact card display
 ---
+
+## 2026-03-01 - SVELTE-006
+- Implemented DeviceSelector.svelte component with device dropdown, status dots, and sessionStorage persistence
+- Integrated DeviceSelector into dashboard +page.svelte header area
+- Files changed:
+  - NEW: apps/dashboard/src/lib/components/DeviceSelector.svelte
+  - MODIFIED: apps/dashboard/src/routes/+page.svelte
+- **Learnings for future iterations:**
+  - `{@const}` in Svelte 5 cannot be used directly inside a `<div>` — must be inside `{#if}`, `{#each}`, `{#snippet}`, etc. Use `$derived` in the script block instead for computed values needed in templates.
+  - The telemetry WebSocket store (`src/lib/stores/telemetry.ts`) does not currently support device-based filtering — it receives all telemetry and stores the last device_id. Future work could add device filtering to the WebSocket connection.
+  - For select inputs with custom styling (status dots, chevrons), use `appearance-none` on the `<select>` and position absolute elements inside a `relative` wrapper.
+---
