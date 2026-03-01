@@ -233,6 +233,7 @@ async fn main() {
         .route("/api/profiles", post(api_create_profile))
         .route("/api/profiles", get(api_list_profiles))
         .route("/api/profiles/:id", get(api_get_profile))
+        .route("/api/profiles/:id", put(api_update_profile))
         .route("/api/profiles/:id", delete(api_delete_profile))
         .route("/api/profiles/import/artisan", post(api_import_artisan_profile))
         // Device Configuration API (DEV-004)
@@ -1388,6 +1389,21 @@ async fn api_get_profile(State(state): State<AppState>, Path(id): Path<String>) 
         Err(e) => {
             tracing::error!(?e, "Failed to get profile");
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get profile").into_response()
+        }
+    }
+}
+
+async fn api_update_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<CreateProfileRequest>,
+) -> Response {
+    match state.session_service.update_profile(&id, req).await {
+        Ok(Some(profile)) => Json(profile).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "Profile not found").into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to update profile");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update profile").into_response()
         }
     }
 }

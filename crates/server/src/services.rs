@@ -426,6 +426,68 @@ impl RoastSessionService {
         Ok(result.rows_affected() > 0)
     }
 
+    pub async fn update_profile(&self, id: &str, req: CreateProfileRequest) -> Result<Option<ProfileWithPoints>> {
+        let now = Utc::now();
+        let mut tx = self.db.begin().await?;
+
+        // Update profile metadata
+        let result = sqlx::query(
+            r#"
+            UPDATE roast_profiles SET
+                name = ?, description = ?, updated_at = ?,
+                target_total_time = ?, target_first_crack = ?, target_end_temp = ?,
+                preheat_temp = ?, charge_temp = ?
+            WHERE id = ?
+            "#
+        )
+        .bind(&req.name)
+        .bind(&req.description)
+        .bind(now)
+        .bind(req.target_total_time)
+        .bind(req.target_first_crack)
+        .bind(req.target_end_temp)
+        .bind(req.preheat_temp)
+        .bind(req.charge_temp)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+
+        // Delete old points and insert new ones atomically
+        sqlx::query("DELETE FROM profile_points WHERE profile_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+
+        for point_req in &req.points {
+            let point_id = Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"
+                INSERT INTO profile_points (
+                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                "#
+            )
+            .bind(&point_id)
+            .bind(id)
+            .bind(point_req.time_seconds)
+            .bind(point_req.target_temp)
+            .bind(point_req.fan_speed)
+            .bind(&point_req.notes)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        tx.commit().await?;
+
+        // Fetch and return updated profile with points
+        self.get_profile_with_points(id).await
+    }
+
     pub async fn import_artisan_profile(&self, req: ImportArtisanProfileRequest) -> Result<ProfileWithPoints> {
         let parsed = parse_artisan_alog(&req.alog_content)?;
         
@@ -1678,5 +1740,75 @@ mod tests {
         // Verify register maps are gone
         let registers = service.get_register_map(&device.id).await.unwrap();
         assert!(registers.is_empty());
+    }
+
+    // ---- Roast Profile CRUD Tests ----
+
+    #[tokio::test]
+    async fn test_profile_update_round_trip() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create a profile with initial points
+        let created = service.create_profile(CreateProfileRequest {
+            name: "Original Profile".to_string(),
+            description: Some("Initial description".to_string()),
+            target_total_time: Some(600),
+            target_first_crack: None,
+            target_end_temp: Some(210.0),
+            preheat_temp: None,
+            charge_temp: Some(180.0),
+            points: vec![
+                CreateProfilePointRequest { time_seconds: 0, target_temp: 180.0, fan_speed: Some(80), notes: None },
+                CreateProfilePointRequest { time_seconds: 300, target_temp: 200.0, fan_speed: None, notes: None },
+            ],
+        }).await.unwrap();
+
+        assert_eq!(created.profile.name, "Original Profile");
+        assert_eq!(created.points.len(), 2);
+
+        // Update the profile with new metadata and different points
+        let updated = service.update_profile(&created.profile.id, CreateProfileRequest {
+            name: "Updated Profile".to_string(),
+            description: Some("Updated description".to_string()),
+            target_total_time: Some(720),
+            target_first_crack: Some(360),
+            target_end_temp: Some(220.0),
+            preheat_temp: None,
+            charge_temp: Some(185.0),
+            points: vec![
+                CreateProfilePointRequest { time_seconds: 0, target_temp: 185.0, fan_speed: Some(90), notes: None },
+                CreateProfilePointRequest { time_seconds: 200, target_temp: 195.0, fan_speed: None, notes: None },
+                CreateProfilePointRequest { time_seconds: 500, target_temp: 220.0, fan_speed: Some(60), notes: Some("Finish".to_string()) },
+            ],
+        }).await.unwrap();
+
+        let updated = updated.expect("Profile should exist");
+        assert_eq!(updated.profile.name, "Updated Profile");
+        assert_eq!(updated.profile.description, Some("Updated description".to_string()));
+        assert_eq!(updated.profile.target_total_time, Some(720));
+        assert_eq!(updated.profile.target_first_crack, Some(360));
+        assert_eq!(updated.profile.charge_temp, Some(185.0));
+        assert_eq!(updated.points.len(), 3);
+        assert_eq!(updated.points[0].target_temp, 185.0);
+        assert_eq!(updated.points[2].notes, Some("Finish".to_string()));
+
+        // Verify old points were replaced (not accumulated)
+        let fetched = service.get_profile_with_points(&created.profile.id).await.unwrap().unwrap();
+        assert_eq!(fetched.points.len(), 3);
+
+        // Update non-existent profile returns None
+        let missing = service.update_profile("nonexistent-id", CreateProfileRequest {
+            name: "Ghost".to_string(),
+            description: None,
+            target_total_time: None,
+            target_first_crack: None,
+            target_end_temp: None,
+            preheat_temp: None,
+            charge_temp: None,
+            points: vec![],
+        }).await.unwrap();
+
+        assert!(missing.is_none());
     }
 }

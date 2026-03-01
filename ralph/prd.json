@@ -17,7 +17,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "The backend already has create_profile, list_profiles, get_profile_with_points, delete_profile, import_artisan_profile in session_service (crates/server/src/services/sessions.rs). Profile routes are in main.rs around line 1361. CreateProfileRequest model exists in models.rs. The DB tables roast_profiles and profile_points exist with FK cascade delete. For the update endpoint, model it after api_create_profile but accept the profile ID from the path and do an UPDATE on metadata + DELETE/INSERT on points within a transaction. The frontend API client is at apps/dashboard/src/lib/api/client.ts — the profiles object is missing create() (backend endpoint exists). Add update() once the backend endpoint is ready."
     },
     {

@@ -44,3 +44,16 @@
 - WebSocket /ws/telemetry forwards autotune events as: { autotune: { type: "status"|"results", data: ... } }
 - Telemetry broadcast uses TelemetryEvent via tokio::sync::broadcast channel in TelemetryService
 
+## 2026-03-01 - PF-001
+- Added `profiles.create()` and `profiles.update()` methods to frontend API client with `CreateProfileRequest` type
+- Added `update_profile` service method to `RoastSessionService` using SQLx transaction: UPDATE metadata + DELETE old points + INSERT new points
+- Added `PUT /api/profiles/:id` route and `api_update_profile` handler in main.rs
+- Added `test_profile_update_round_trip` test covering create, update with new points, fetch verification, and non-existent ID handling
+- Files changed: `crates/server/src/services.rs`, `crates/server/src/main.rs`, `apps/dashboard/src/lib/api/client.ts`
+- **Learnings for future iterations:**
+  - `RoastSessionService` uses the pool directly (no Arc wrapper); transaction via `self.db.begin().await`
+  - Bind transaction references as `&mut *tx` in sqlx queries
+  - Clippy catches identity maps like `.map(|opt| opt.map(|p| p))` — just return the inner expression directly
+  - The `CreateProfileRequest` model is reusable for both create and update endpoints (same field structure)
+  - Profile routes are inline in main.rs (not separated into route modules like devices)
+---

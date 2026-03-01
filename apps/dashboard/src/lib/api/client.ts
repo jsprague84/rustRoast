@@ -229,12 +229,35 @@ export interface ProfilePoint {
 	notes: string | null;
 }
 
+export interface CreateProfileRequest {
+	name: string;
+	description?: string;
+	target_total_time?: number;
+	target_first_crack?: number;
+	target_end_temp?: number;
+	preheat_temp?: number;
+	charge_temp?: number;
+	points: { time_seconds: number; target_temp: number; fan_speed?: number; notes?: string }[];
+}
+
 export const profiles = {
 	list: () =>
 		request<RoastProfile[]>('/api/profiles'),
 
 	get: (id: string) =>
 		request<ProfileWithPoints>(`/api/profiles/${id}`),
+
+	create: (req: CreateProfileRequest) =>
+		request<ProfileWithPoints>('/api/profiles', {
+			method: 'POST',
+			body: JSON.stringify(req)
+		}),
+
+	update: (id: string, req: CreateProfileRequest) =>
+		request<ProfileWithPoints>(`/api/profiles/${id}`, {
+			method: 'PUT',
+			body: JSON.stringify(req)
+		}),
 
 	delete: (id: string) =>
 		request<void>(`/api/profiles/${id}`, { method: 'DELETE' }),
