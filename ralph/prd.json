@@ -233,7 +233,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "The 'Load Default Map' populates registers matching the conventions from the hardware integration guide: input registers for temperatures/status, holding registers for setpoint/control. Users can customize individual rows. Collapsible sections use a $state boolean per section."
     },
     {

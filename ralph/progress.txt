@@ -225,3 +225,24 @@
   - CSS spin animation is injected via a `<style>` tag inside the component since there's no global CSS injection in this React setup
   - `npm run build` (Vite) remains the reliable quality check; ECharts chunk size warning is expected
 ---
+
+## 2026-03-01 - DEV-011
+- Implemented Step 3 (Device Configuration) of the device setup wizard
+- Four collapsible sections: Control Defaults, Safety Limits, PID Parameters (collapsed by default), Modbus Register Map (conditional)
+- Control Defaults: control mode radio (manual/auto), default setpoint (0-300), default fan PWM (0-255)
+- Safety Limits: max temperature (100-350, default 240), minimum fan PWM for heater (0-255, default 100)
+- PID Parameters: Kp (default 15.0), Ki (default 1.0), Kd (default 25.0) with step increments
+- Modbus Register Map: full table editor with address (hex), name, type, data type, byte order, scale, offset, unit, writable toggle
+- "Load Default Map" button populates standard coffee roaster register layout (5 input + 6 holding registers matching modbus.rs)
+- Add/remove row support for custom register entries
+- CollapsibleSection reusable component with toggle arrow
+- Extended WizardFormData with `config: DeviceConfigData` and `register_map: ModbusRegisterEntry[]` fields
+- Files changed:
+  - `apps/dashboard/src/pages/DeviceWizard.tsx` — Added ModbusRegisterEntry, DeviceConfigData types, DEFAULT_REGISTER_MAP constant, CollapsibleSection, RegisterMapEditor, Step3Configuration components, updated initial formData state
+- **Learnings for future iterations:**
+  - CollapsibleSection uses local useState for open/close — suitable for sections that don't need external control
+  - The default register map mirrors the modbus.rs register layout exactly: input regs 0x0000-0x0007 (bean_temp, env_temp, rate_of_rise, heater_pwm, fan_pwm) and holding regs 0x0000-0x000C (setpoint, fan_pwm_setpoint, heater_pwm_setpoint, control_mode, heater_enable, emergency_stop)
+  - formatHex utility converts numeric addresses to 0x-prefixed hex strings for display; parseInt(val, 16) converts back
+  - Register map table uses inline editing for each cell — overflowX: auto handles narrow viewports
+  - The "Load Default Map" confirms replacement if entries already exist (window.confirm)
+---
