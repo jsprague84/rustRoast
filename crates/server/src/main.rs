@@ -1011,18 +1011,23 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_autotune_results_device_ts ON autotune_results(device_id, ts DESC);")
         .execute(&pool).await?;
     
-    // Run roast session migrations
-    let migration_sql = include_str!("../migrations/001_roast_sessions.sql");
-    for statement in migration_sql.split(';') {
-        let statement = statement.trim();
-        if !statement.is_empty() {
-            if let Err(e) = sqlx::query(statement).execute(&pool).await {
-                // Log but don't fail on errors (tables might already exist)
-                tracing::debug!("Migration statement result: {:?}", e);
+    // Run migrations
+    let migrations: &[&str] = &[
+        include_str!("../migrations/001_roast_sessions.sql"),
+        include_str!("../migrations/003_device_configuration.sql"),
+    ];
+    for migration_sql in migrations {
+        for statement in migration_sql.split(';') {
+            let statement = statement.trim();
+            if !statement.is_empty() {
+                if let Err(e) = sqlx::query(statement).execute(&pool).await {
+                    // Log but don't fail on errors (tables might already exist)
+                    tracing::debug!("Migration statement result: {:?}", e);
+                }
             }
         }
     }
-    
+
     Ok(pool)
 }
 
