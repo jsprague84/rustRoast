@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
 	import type { PageProps } from './$types';
 	import Chart, { type ECOption } from '$lib/components/Chart.svelte';
 	import { profiles, type ProfileWithPoints } from '$lib/api/client.js';
@@ -33,10 +33,9 @@
 		importing = true;
 		try {
 			const text = await importFile.text();
-			await profiles.importArtisan(text, importFile.name.replace(/\.[^.]+$/, ''));
-			await invalidateAll();
-			showImport = false;
-			importFile = null;
+			const imported = await profiles.importArtisan(text, importFile.name.replace(/\.[^.]+$/, ''));
+			notifications.add('Profile imported — review and edit before finalizing', 'success');
+			goto(`/profiles/${imported.id}/edit`);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : 'Import failed';
 			notifications.add(msg, 'error');
