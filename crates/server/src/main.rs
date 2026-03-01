@@ -29,10 +29,12 @@ mod models;
 mod modbus;
 mod routes;
 mod services;
+mod telemetry;
 
 use models::*;
 use routes::device_routes;
 use services::{RoastSessionService, DeviceService};
+use telemetry::TelemetryService;
 
 #[derive(Clone)]
 pub(crate) struct AppState {
@@ -45,6 +47,7 @@ pub(crate) struct AppState {
     db: SqlitePool,
     session_service: RoastSessionService,
     pub(crate) device_service: DeviceService,
+    pub(crate) telemetry_service: TelemetryService,
     /// WebSocket control channels for devices connected via WS instead of MQTT.
     /// Key: device_id, Value: sender for outgoing control commands.
     device_ws_senders: Arc<RwLock<HashMap<String, tokio::sync::mpsc::UnboundedSender<String>>>>,
@@ -136,6 +139,12 @@ async fn main() {
     let db = init_db().await.expect("failed to init db");
     let session_service = RoastSessionService::new(db.clone());
     let device_service = DeviceService::new(db.clone());
+    let telemetry_service = TelemetryService::new(
+        telemetry_cache.clone(),
+        db.clone(),
+        device_service.clone(),
+        metrics.telemetry_last_seen.clone(),
+    );
     let device_ws_senders = Arc::new(RwLock::new(HashMap::new()));
     let state = AppState {
         mqtt: mqtt.clone(),
@@ -147,6 +156,7 @@ async fn main() {
         autotune_results_cache: autotune_results_cache.clone(),
         session_service,
         device_service: device_service.clone(),
+        telemetry_service: telemetry_service.clone(),
         device_ws_senders,
     };
 
@@ -243,7 +253,7 @@ async fn main() {
     // Background consumer for MQTT events -> caches + metrics + persistence
     tokio::spawn(mqtt_consumer_loop(
         mqtt.clone(),
-        telemetry_cache,
+        telemetry_service,
         device_registry,
         metrics.clone(),
         db.clone(),
@@ -727,7 +737,7 @@ fn parse_roaster_topic(topic: &str) -> Option<(String, String)> {
 #[allow(clippy::too_many_arguments)]
 async fn mqtt_consumer_loop(
     mqtt: MqttService,
-    telemetry_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
+    telemetry_service: TelemetryService,
     device_registry: Arc<RwLock<HashMap<String, DeviceInfo>>>,
     metrics: Arc<Metrics>,
     db: SqlitePool,
@@ -736,9 +746,6 @@ async fn mqtt_consumer_loop(
     device_service: DeviceService,
 ) {
     let mut rx = mqtt.events();
-    // Debounce last-seen updates: at most once per 10 seconds per device
-    let mut last_seen_debounce: HashMap<String, std::time::Instant> = HashMap::new();
-    let debounce_interval = std::time::Duration::from_secs(10);
 
     loop {
         match rx.recv().await {
@@ -793,27 +800,12 @@ async fn mqtt_consumer_loop(
                                 }
                             };
 
-                            // Shared telemetry processing (cache, persist, session recording)
-                            process_incoming_telemetry(
+                            // Shared telemetry processing (cache, persist, session recording, last-seen)
+                            telemetry_service.process_telemetry(
                                 &device_id,
                                 &val,
                                 device_status.as_ref(),
-                                &telemetry_cache,
-                                &metrics,
-                                &db,
                             ).await;
-
-                            // Debounced last-seen update
-                            let should_update = last_seen_debounce
-                                .get(&device_id)
-                                .map(|last| last.elapsed() >= debounce_interval)
-                                .unwrap_or(true);
-                            if should_update {
-                                if let Err(e) = device_service.update_last_seen(&device_id).await {
-                                    tracing::warn!(%device_id, error = %e, "Failed to update last_seen");
-                                }
-                                last_seen_debounce.insert(device_id.clone(), std::time::Instant::now());
-                            }
                         }
                     } else if kind == "status" {
                         if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&payload) {
@@ -882,61 +874,6 @@ fn epoch_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
-/// Shared telemetry processing used by both MQTT consumer and device WebSocket handler.
-/// Updates telemetry cache, persists to DB, records to active sessions.
-async fn process_incoming_telemetry(
-    device_id: &str,
-    payload: &serde_json::Value,
-    device_status: Option<&DeviceStatus>,
-    telemetry_cache: &Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
-    metrics: &Arc<Metrics>,
-    db: &SqlitePool,
-) {
-    let now = epoch_secs();
-
-    metrics.telemetry_last_seen.with_label_values(&[device_id]).set(now as i64);
-
-    // Always update telemetry cache
-    telemetry_cache.write().await.insert(device_id.to_string(), (payload.clone(), now));
-
-    let payload_str = serde_json::to_string(payload).unwrap_or_default();
-
-    // Persist to general telemetry table
-    let _ = sqlx::query("INSERT INTO telemetry (device_id, ts, payload) VALUES (?, ?, ?)")
-        .bind(device_id)
-        .bind(now as i64)
-        .bind(&payload_str)
-        .execute(db)
-        .await;
-
-    // Record to active session telemetry (skip for disabled devices)
-    let is_disabled = device_status == Some(&DeviceStatus::Disabled);
-    if !is_disabled {
-        let _ = sqlx::query(r#"
-            INSERT INTO session_telemetry (session_id, timestamp, bean_temp, env_temp, rate_of_rise, heater_pwm, fan_pwm, setpoint)
-            SELECT s.id, ?,
-                   json_extract(?, '$.beanTemp'),
-                   json_extract(?, '$.envTemp'),
-                   json_extract(?, '$.rateOfRise'),
-                   json_extract(?, '$.heaterPWM'),
-                   json_extract(?, '$.fanPWM'),
-                   json_extract(?, '$.setpoint')
-            FROM roast_sessions s
-            WHERE s.device_id = ? AND s.status = 'active'
-        "#)
-            .bind(now as i64)
-            .bind(&payload_str)
-            .bind(&payload_str)
-            .bind(&payload_str)
-            .bind(&payload_str)
-            .bind(&payload_str)
-            .bind(&payload_str)
-            .bind(device_id)
-            .execute(db)
-            .await;
-    }
-}
-
 // ----- Device WebSocket endpoint (DEV-017) -----
 
 async fn ws_device_telemetry(
@@ -973,9 +910,6 @@ async fn device_ws_loop(state: AppState, device_id: String, mut socket: WebSocke
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     state.device_ws_senders.write().await.insert(device_id.clone(), tx);
 
-    let mut last_seen_debounce: HashMap<String, std::time::Instant> = HashMap::new();
-    let debounce_interval = std::time::Duration::from_secs(10);
-
     loop {
         tokio::select! {
             // Incoming telemetry from device
@@ -991,24 +925,11 @@ async fn device_ws_loop(state: AppState, device_id: String, mut socket: WebSocke
                                     .flatten()
                                     .map(|d| d.device.status);
 
-                                process_incoming_telemetry(
+                                state.telemetry_service.process_telemetry(
                                     &device_id,
                                     &val,
                                     device_status.as_ref(),
-                                    &state.telemetry_cache,
-                                    &state.metrics,
-                                    &state.db,
                                 ).await;
-
-                                // Debounced last-seen update
-                                let should_update = last_seen_debounce
-                                    .get(&device_id)
-                                    .map(|last| last.elapsed() >= debounce_interval)
-                                    .unwrap_or(true);
-                                if should_update {
-                                    let _ = state.device_service.update_last_seen(&device_id).await;
-                                    last_seen_debounce.insert(device_id.clone(), std::time::Instant::now());
-                                }
                             }
                             Err(_) => {
                                 tracing::warn!(%device_id, "Invalid JSON from device WebSocket");
