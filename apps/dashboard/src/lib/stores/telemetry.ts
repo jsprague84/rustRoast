@@ -1,5 +1,5 @@
 import { writable, derived, readonly } from 'svelte/store';
-import type { Telemetry, TelemetryMessage, ConnectionStatus } from '$lib/types/telemetry.js';
+import type { Telemetry, TelemetryMessage, AutotuneWsMessage, ConnectionStatus } from '$lib/types/telemetry.js';
 
 function getWsUrl(): string {
 	if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL;
@@ -16,12 +16,15 @@ const _telemetry = writable<Telemetry | null>(null);
 const _deviceId = writable<string | null>(null);
 const _connectionStatus = writable<ConnectionStatus>('disconnected');
 const _history = writable<{ timestamp: number; telemetry: Telemetry }[]>([]);
+const _autotuneEvent = writable<AutotuneWsMessage | null>(null);
 
 /** Public read-only stores. */
 export const telemetry = readonly(_telemetry);
 export const deviceId = readonly(_deviceId);
 export const connectionStatus = readonly(_connectionStatus);
 export const telemetryHistory = readonly(_history);
+/** Latest autotune WebSocket event (status or results). */
+export const autotuneEvent = readonly(_autotuneEvent);
 
 /** Rate of Rise calculated from telemetry history. */
 export const rateOfRise = derived(_history, ($history, set) => {
@@ -69,19 +72,22 @@ function connect() {
 
 	ws.onmessage = (event) => {
 		try {
-			const msg: TelemetryMessage = JSON.parse(event.data);
+			const msg = JSON.parse(event.data);
 			if (msg.telemetry) {
+				const tmsg = msg as TelemetryMessage;
 				// Filter to selected device (if one is selected)
-				if (selectedDevice && msg.device_id !== selectedDevice) return;
+				if (selectedDevice && tmsg.device_id !== selectedDevice) return;
 
-				_telemetry.set(msg.telemetry);
-				_deviceId.set(msg.device_id);
+				_telemetry.set(tmsg.telemetry);
+				_deviceId.set(tmsg.device_id);
 				_history.update((h) => {
-					const next = [...h, { timestamp: Date.now(), telemetry: msg.telemetry }];
+					const next = [...h, { timestamp: Date.now(), telemetry: tmsg.telemetry }];
 					// Keep max 3600 points (60 minutes at 1Hz)
 					if (next.length > 3600) return next.slice(next.length - 3600);
 					return next;
 				});
+			} else if (msg.autotune) {
+				_autotuneEvent.set(msg as AutotuneWsMessage);
 			}
 		} catch {
 			// Ignore unparseable messages

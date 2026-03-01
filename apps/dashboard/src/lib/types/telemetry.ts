@@ -24,5 +24,14 @@ export interface TelemetryMessage {
 	telemetry: Telemetry;
 }
 
+/** WebSocket message envelope for autotune events. */
+export interface AutotuneWsMessage {
+	device_id: string;
+	autotune: {
+		type: 'status' | 'results';
+		data: Record<string, unknown>;
+	};
+}
+
 /** WebSocket connection state. */
 export type ConnectionStatus = 'connected' | 'reconnecting' | 'disconnected';

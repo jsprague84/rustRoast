@@ -283,3 +283,41 @@ export const settings = {
 			body: JSON.stringify({ value })
 		}, true)
 };
+
+// --- Autotune API ---
+
+export interface AutotuneStatusResponse {
+	device_id: string;
+	timestamp: number;
+	status: Record<string, unknown>;
+}
+
+export interface AutotuneResultsResponse {
+	device_id: string;
+	timestamp: number;
+	results: { Kp: number; Ki: number; Kd: number };
+}
+
+export const autotune = {
+	start: (deviceId: string, targetTemp: number) =>
+		request<void>(`/api/roaster/${deviceId}/autotune/start`, {
+			method: 'POST',
+			body: JSON.stringify({ target_temperature: targetTemp })
+		}, true),
+
+	stop: (deviceId: string) =>
+		request<void>(`/api/roaster/${deviceId}/autotune/stop`, {
+			method: 'POST'
+		}, true),
+
+	apply: (deviceId: string) =>
+		request<void>(`/api/roaster/${deviceId}/autotune/apply`, {
+			method: 'POST'
+		}, true),
+
+	getLatestStatus: (deviceId: string) =>
+		request<AutotuneStatusResponse>(`/api/roaster/${deviceId}/autotune/status/latest`),
+
+	getLatestResults: (deviceId: string) =>
+		request<AutotuneResultsResponse>(`/api/roaster/${deviceId}/autotune/results/latest`)
+};
