@@ -39,7 +39,7 @@
         "npm run build succeeds"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Use the API client from src/lib/api/devices.ts (import { listDevices } from '$lib/api/devices.js'). The load function pattern: export const load = async ({ fetch }) => { ... }. Follow the sessions/+page.ts pattern but call listDevices(). Card grid uses Tailwind: grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4. Device cards should link to /devices/[id] via <a> tags. All styling must use the dark theme tokens from app.css (bg-card, text-foreground, border-border, text-muted-foreground, bg-accent for hover). IMPORTANT: The devices API client uses global fetch, so pass the SvelteKit fetch to it or call fetch directly in the load function."
     },
     {

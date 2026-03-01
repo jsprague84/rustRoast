@@ -450,3 +450,25 @@
   - Active state detection uses page.url.pathname.startsWith(href) for non-root paths, exact match for root
   - Icon components are passed by reference in the navItems array and rendered as `<item.icon class="h-4 w-4" />`
 ---
+
+## 2026-03-01 - SVELTE-002
+- Created device list page at /devices with SvelteKit load function and Svelte 5 component
+- Load function fetches both /api/devices and /api/devices/discovered via SvelteKit fetch (SSR-compatible)
+- Pending/discovered devices shown in amber-bordered banner with "Configure" button linking to /devices/new?device_id=...
+- Configured devices (non-pending) displayed as responsive card grid (1/2/3 cols) with status badges, relative time, description, location
+- Status badge classes: active=green, pending=amber, error=red, disabled=gray (matching sessions page pattern)
+- Empty state with Cpu icon when no devices at all
+- Header has "Add Device" (amber, links to /devices/new) and "Device Profiles" (outline, links to /devices/profiles) buttons
+- Uses lucide-svelte icons: Cpu, Plus, Signal, Wifi
+- Files changed:
+  - `apps/dashboard/src/routes/devices/+page.ts` — New: SvelteKit load function fetching devices + discovered in parallel
+  - `apps/dashboard/src/routes/devices/+page.svelte` — New: device list page with pending banner, card grid, empty state
+- **Learnings for future iterations:**
+  - SvelteKit load functions use the `fetch` parameter for SSR compatibility — the `$lib/api/devices.ts` functions use global fetch and should NOT be used in load functions
+  - Load function pattern: `export const load: PageLoad = async ({ fetch }) => { ... }` with direct fetch calls, not API client wrappers
+  - `$derived` is the Svelte 5 replacement for reactive computed values — use it for filtered/derived lists from load data
+  - `PageProps` type from `./$types` provides typed `data` prop matching the load function's return type
+  - Relative time formatting is straightforward as a local helper — no need for a library like date-fns
+  - Status badge classes follow the exact same inline ternary pattern used in the sessions page for status badges
+  - The `configuredDevices` filter excludes pending devices since they appear in the dedicated banner section
+---
