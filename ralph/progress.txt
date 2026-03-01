@@ -215,3 +215,21 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - `$effect` with cleanup pattern works for both `initAutotuneSubscription` and `destroyAutotuneSubscription` lifecycle
   - Label `for` attribute + input `id` ensures accessibility (no a11y warnings for this component)
 ---
+
+## 2026-03-01 - AT-003
+- What was implemented: Real-time autotune progress display in AutotunePanel
+  - Phase display with color coding: amber (heating/stabilizing), green (running/complete), blue (analyzing), red (error)
+  - Phase label shown as title-case (e.g., "Heating", "Running")
+  - Step count shown during RUNNING phase ("Step 7 of ~15")
+  - Animated progress bar with phase-appropriate color and smooth transitions
+  - Current BT reading from telemetry store and target temperature from autotune store
+  - Error state shows descriptive error message from autotune event data
+  - All state from autotune store (WebSocket-driven, no polling)
+- Files changed:
+  - `apps/dashboard/src/lib/components/AutotunePanel.svelte` — added telemetry import, $derived phase/color computations, progress display section
+- **Learnings for future iterations:**
+  - `$derived.by` works well for switch-based mappings (phase → color class) since the derivation auto-tracks the reactive source
+  - Tailwind dynamic width via inline `style="width: {value}%"` works for progress bars (class-based widths can't be dynamic)
+  - `transition-all duration-500` on the progress bar div gives a smooth animation as progress updates arrive via WebSocket
+  - Import `telemetry` (readonly store) from telemetry.ts to access current BT in any component with `$telemetry?.beanTemp`
+---

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { Play, Square, Zap } from 'lucide-svelte';
-	import { deviceId } from '$lib/stores/telemetry.js';
+	import { deviceId, telemetry } from '$lib/stores/telemetry.js';
 	import { sessions, type RoastSession } from '$lib/api/client.js';
 	import { notifications } from '$lib/stores/notifications.js';
 	import {
@@ -11,6 +11,52 @@
 		destroyAutotuneSubscription,
 		fetchLatestAutotune
 	} from '$lib/stores/autotune.svelte.js';
+
+	const phaseLabel = $derived(
+		autotuneState.status?.phase
+			? autotuneState.status.phase.charAt(0) + autotuneState.status.phase.slice(1).toLowerCase()
+			: ''
+	);
+
+	const phaseColor = $derived.by(() => {
+		const phase = autotuneState.status?.phase;
+		if (!phase) return 'text-muted-foreground';
+		switch (phase) {
+			case 'HEATING':
+			case 'STABILIZING':
+				return 'text-amber-400';
+			case 'RUNNING':
+				return 'text-green-400';
+			case 'ANALYZING':
+				return 'text-blue-400';
+			case 'COMPLETE':
+				return 'text-green-400';
+			case 'ERROR':
+				return 'text-red-400';
+			default:
+				return 'text-muted-foreground';
+		}
+	});
+
+	const progressBarColor = $derived.by(() => {
+		const phase = autotuneState.status?.phase;
+		if (!phase) return 'bg-amber-500';
+		switch (phase) {
+			case 'HEATING':
+			case 'STABILIZING':
+				return 'bg-amber-500';
+			case 'RUNNING':
+				return 'bg-green-500';
+			case 'ANALYZING':
+				return 'bg-blue-500';
+			case 'COMPLETE':
+				return 'bg-green-500';
+			case 'ERROR':
+				return 'bg-red-500';
+			default:
+				return 'bg-amber-500';
+		}
+	});
 
 	let targetTemp = $state(200);
 	let loading = $state(false);
@@ -112,6 +158,48 @@
 			</div>
 
 			{#if autotuneState.isAutotuning}
+				<!-- Progress display -->
+				{#if autotuneState.status}
+					<div class="space-y-2 rounded-md border border-border bg-background p-3">
+						<div class="flex items-center justify-between">
+							<span class="text-sm font-medium {phaseColor}">{phaseLabel}</span>
+							{#if autotuneState.status.phase === 'RUNNING' && autotuneState.status.stepCount > 0}
+								<span class="text-xs text-muted-foreground">
+									Step {autotuneState.status.stepCount} of ~15
+								</span>
+							{/if}
+						</div>
+
+						<!-- Progress bar -->
+						<div class="h-2 w-full overflow-hidden rounded-full bg-border">
+							<div
+								class="h-full rounded-full transition-all duration-500 {progressBarColor}"
+								style="width: {autotuneState.status.progress}%"
+							></div>
+						</div>
+
+						<!-- BT and target readings -->
+						<div class="flex justify-between text-xs text-muted-foreground">
+							<span>
+								BT: {$telemetry?.beanTemp != null
+									? `${$telemetry.beanTemp.toFixed(1)}°C`
+									: '—'}
+							</span>
+							<span>
+								Target: {autotuneState.targetTemp != null
+									? `${autotuneState.targetTemp}°C`
+									: '—'}
+							</span>
+						</div>
+
+						{#if autotuneState.status.phase === 'ERROR' && autotuneState.status.error}
+							<div class="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-400">
+								{autotuneState.status.error}
+							</div>
+						{/if}
+					</div>
+				{/if}
+
 				<button
 					onclick={handleStop}
 					disabled={loading}
