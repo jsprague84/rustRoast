@@ -62,7 +62,7 @@
         "npm run build succeeds"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "Use Svelte 5 runes: let step = $state(1), let formData = $state({...}). For protocol-specific config, use a discriminated union pattern with $state. Use the API functions: createDevice from '$lib/api/devices.js', listDeviceProfiles, addConnection, setRegisterMap, testConnection. Import MODBUS_PRESETS from '$lib/constants/modbus-presets.js'. For navigation after create, use goto from '$app/navigation'. The wizard should be a single .svelte file managing steps with {#if step === 1} blocks. Form validation: check required fields are filled before allowing Next. Test connection button should show a spinner (Loader2 with animate-spin) while pending."
     },
     {

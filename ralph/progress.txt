@@ -472,3 +472,23 @@
   - Status badge classes follow the exact same inline ternary pattern used in the sessions page for status badges
   - The `configuredDevices` filter excludes pending devices since they appear in the dedicated banner section
 ---
+
+## 2026-03-01 - SVELTE-003
+- Implemented 4-step device setup wizard at `src/routes/devices/new/+page.svelte`
+- Step 1 (Basic Info): device_id, name, description, location, profile_id with dropdown from listDeviceProfiles API
+- Step 2 (Connections): Protocol tabs (MQTT/WebSocket/Modbus TCP) with protocol-specific config fields
+- Step 3 (Register Map): Modbus-only step with preset selector from MODBUS_PRESETS, editable register table, add/remove registers
+- Step 4 (Review & Test): Configuration summary, test connection button with spinner/result, create device button
+- Dynamic step indicator: skips Step 3 when protocol is not Modbus TCP
+- Pre-fills device_id from `?device_id=` query param (for discovered device configure flow)
+- Uses goto() for redirect to /devices/[id] after creation
+- Calls createDevice, addConnection, setRegisterMap, testConnection APIs sequentially
+- Files changed: `apps/dashboard/src/routes/devices/new/+page.svelte` (new)
+- npm run check: 0 errors, npm run build: success
+- **Learnings for future iterations:**
+  - Svelte 5 `$derived` can hold a closure for computed validation: `let canGoNext = $derived(() => { ... })` then call as `canGoNext()`
+  - `$page.url.searchParams.get()` works for reading query params in Svelte 5 with `import { page } from '$app/stores'`
+  - For multi-step wizards with conditional steps, use an `effectiveSteps` array and index into it for navigation
+  - Protocol tab UI pattern: flex container with buttons, active gets `bg-amber-600 text-white`, inactive gets muted colors
+  - Form inputs use: `bg-input border-border text-foreground focus:ring-amber-500` for consistent dark theme styling
+---
