@@ -6,11 +6,13 @@
 	import ControlPanel from '$lib/components/ControlPanel.svelte';
 	import PidControls from '$lib/components/PidControls.svelte';
 	import EmergencyStop from '$lib/components/EmergencyStop.svelte';
+	import DeviceSelector from '$lib/components/DeviceSelector.svelte';
 	import { events, type RoastSession, type RoastEvent } from '$lib/api/client.js';
 
 	let activeSession = $state<RoastSession | null>(null);
 	let landmarks = $state<Array<{ type: string; elapsed_seconds: number; temperature?: number }>>([]);
 	let showControls = $state(false);
+	let selectedDeviceId = $state<string | null>(null);
 
 	// Load landmarks when active session changes
 	$effect(() => {
@@ -48,6 +50,11 @@
 <svelte:head>
 	<title>Dashboard | rustRoast</title>
 </svelte:head>
+
+<div class="mb-4 flex items-center justify-between">
+	<h1 class="text-lg font-semibold text-foreground">Dashboard</h1>
+	<DeviceSelector onselect={(id) => (selectedDeviceId = id)} />
+</div>
 
 <div class="flex h-full flex-col gap-4 lg:flex-row lg:items-stretch">
 	<!-- Main content: readings + chart -->
