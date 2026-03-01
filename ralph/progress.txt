@@ -155,7 +155,8 @@
 - The `api` object in `src/api/client.ts` is the single source for all API calls and type exports
 - App.tsx Tab type union controls navigation; new pages need: Tab value, nav link, ErrorBoundary wrapper, and import
 - `npm run build` (Vite) is the reliable quality check; `tsc --noEmit` has pre-existing failures due to missing type declarations
-- Shared telemetry processing: `process_incoming_telemetry()` handles cache update + DB persist + session recording for any protocol (MQTT, WebSocket, Modbus)
+- Shared telemetry processing: `TelemetryService.process_telemetry()` in `telemetry.rs` handles cache update + DB persist + session recording + debounced last-seen for any protocol (MQTT, WebSocket, Modbus)
+- TelemetryService uses `std::sync::Mutex` for debounce map (no await across lock), `tokio::sync::RwLock` for telemetry cache (held across await)
 - Control command routing checks `device_ws_senders` map first (for WS devices), falls back to MQTT publish
 - When adding new sub-pages under devices tab, add explicit match in handleNavigate BEFORE the generic `devices/` catch-all, AND exclude from device detail rendering condition
 - Shared constants/config data used by multiple page components goes in `src/lib/constants/` (e.g., modbus-presets.ts)
@@ -374,4 +375,23 @@
   - `mpsc::UnboundedSender` is appropriate here since control commands are infrequent and unbounded prevents blocking the control API handler
   - The `tokio::select!` in device_ws_loop handles both directions; `socket.recv()` returns None on clean disconnect
   - WS control message format mirrors MQTT structure: `{"type":"control","topic":"roaster/{device_id}/control/setpoint","payload":"180.0"}` so devices can parse it similarly
+---
+
+## 2026-03-01 - DEV-018
+- Factored telemetry processing into TelemetryService in `telemetry.rs`
+- TelemetryService encapsulates: telemetry cache update, DB persistence (telemetry table), session telemetry recording, metrics update, debounced last-seen updates
+- MQTT consumer loop now calls `telemetry_service.process_telemetry()` instead of inline `process_incoming_telemetry()` + manual debounce
+- WebSocket device handler now calls `state.telemetry_service.process_telemetry()` instead of inline logic + manual debounce
+- Removed standalone `process_incoming_telemetry()` function from main.rs
+- Added `mod telemetry` declaration and `TelemetryService` to AppState
+- Debounce state consolidated into TelemetryService using `std::sync::Mutex<HashMap<String, Instant>>` — shared across all protocol consumers
+- Files changed:
+  - `crates/server/src/telemetry.rs` — Added TelemetryService struct with `process_telemetry()` method, `epoch_secs()` utility, imports for sqlx/prometheus/tokio
+  - `crates/server/src/main.rs` — Added `mod telemetry`, `use telemetry::TelemetryService`, `telemetry_service` field in AppState, TelemetryService creation in main(), replaced `process_incoming_telemetry` calls with `telemetry_service.process_telemetry()` in MQTT consumer and WS handler, removed manual debounce logic from both, removed old `process_incoming_telemetry` function
+- **Learnings for future iterations:**
+  - TelemetryService uses `std::sync::Mutex` (not tokio) for the debounce map since the lock is never held across await points — this is simpler and more efficient
+  - The `telemetry_cache` Arc is cloned into both AppState (for route access) and TelemetryService (for processing) — they share the same underlying data
+  - `telemetry.rs` already existed with TelemetryPayload struct and parse_telemetry(); adding TelemetryService to the same file keeps all telemetry concerns co-located
+  - The `mod telemetry;` declaration was missing before this story despite the file existing — it was created in a previous branch but not declared
+  - `telemetry_last_seen` IntGaugeVec is cloned from Metrics and passed directly to TelemetryService, avoiding the need to make the entire Metrics struct public
 ---

@@ -367,7 +367,7 @@
         "cargo build succeeds, cargo test passes, cargo clippy passes"
       ],
       "priority": 18,
-      "passes": false,
+      "passes": true,
       "notes": "This is a refactor story. The current inline SQL in mqtt.rs handle_telemetry() should move to the new service. The MQTT handler becomes a thin wrapper that parses the payload and calls the service."
     },
     {
