@@ -1,0 +1,72 @@
+import type { ModbusRegisterEntry } from '../../pages/DeviceWizard'
+
+export type ModbusPreset = {
+  id: string
+  name: string
+  description: string
+  registers: ModbusRegisterEntry[]
+}
+
+/**
+ * rustRoast Standard register layout matching the backend modbus.rs implementation.
+ * Input registers for sensor telemetry, holding registers for control values.
+ */
+const RUSTROAST_STANDARD: ModbusRegisterEntry[] = [
+  // Input registers (read-only, telemetry)
+  { address: 0x0000, name: 'bean_temp', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: false, description: 'Bean temperature (float32 across 0x0000-0x0001)' },
+  { address: 0x0002, name: 'env_temp', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: false, description: 'Environment temperature (float32 across 0x0002-0x0003)' },
+  { address: 0x0004, name: 'rate_of_rise', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C/min', writable: false, description: 'Rate of rise (float32 across 0x0004-0x0005)' },
+  { address: 0x0006, name: 'heater_pwm', register_type: 'input', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: false, description: 'Heater PWM percentage (0-100)' },
+  { address: 0x0007, name: 'fan_pwm', register_type: 'input', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: false, description: 'Fan PWM value (0-255)' },
+  // Holding registers (read-write, control)
+  { address: 0x0000, name: 'setpoint', register_type: 'holding', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: true, description: 'Target bean temperature (float32 across 0x0000-0x0001)' },
+  { address: 0x0002, name: 'fan_pwm_setpoint', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Fan PWM setpoint (0-255)' },
+  { address: 0x0003, name: 'heater_pwm_setpoint', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: true, description: 'Heater PWM setpoint (0-100)' },
+  { address: 0x0004, name: 'control_mode', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Control mode: 0 = manual, 1 = auto' },
+  { address: 0x0005, name: 'heater_enable', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Heater enable: 0 = off, 1 = on' },
+  { address: 0x000C, name: 'emergency_stop', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Emergency stop: write 1 to trigger' },
+]
+
+/**
+ * Artisan-compatible register layout following the conventions used by Artisan roasting software.
+ * Uses the standard PID controller register addresses for temperature, setpoint, heater, and fan.
+ * Based on the Artisan Modbus device setup documentation.
+ */
+const ARTISAN_COMPATIBLE: ModbusRegisterEntry[] = [
+  // Input registers — sensor readings
+  { address: 0x0000, name: 'BT', register_type: 'input', data_type: 'int16', byte_order: 'AB', scale_factor: 0.1, offset: 0.0, unit: '\u00B0C', writable: false, description: 'Bean Temperature (BT) x10' },
+  { address: 0x0001, name: 'ET', register_type: 'input', data_type: 'int16', byte_order: 'AB', scale_factor: 0.1, offset: 0.0, unit: '\u00B0C', writable: false, description: 'Environment Temperature (ET) x10' },
+  { address: 0x0002, name: 'BT_RoR', register_type: 'input', data_type: 'int16', byte_order: 'AB', scale_factor: 0.1, offset: 0.0, unit: '\u00B0C/min', writable: false, description: 'BT Rate of Rise x10' },
+  { address: 0x0003, name: 'heater_duty', register_type: 'input', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: false, description: 'Heater duty cycle (0-100)' },
+  { address: 0x0004, name: 'fan_duty', register_type: 'input', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: false, description: 'Fan duty cycle (0-100)' },
+  // Holding registers — control setpoints (Artisan s/w write targets)
+  { address: 0x0000, name: 'SV', register_type: 'holding', data_type: 'int16', byte_order: 'AB', scale_factor: 0.1, offset: 0.0, unit: '\u00B0C', writable: true, description: 'Set Value / target temperature x10' },
+  { address: 0x0001, name: 'heater_cmd', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: true, description: 'Heater command (0-100)' },
+  { address: 0x0002, name: 'fan_cmd', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: true, description: 'Fan command (0-100)' },
+  { address: 0x0003, name: 'pid_mode', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'PID mode: 0 = manual, 1 = auto' },
+  // Coil registers — discrete controls
+  { address: 0x0000, name: 'heater_on', register_type: 'coil', data_type: 'bool', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Heater enable (on/off)' },
+  { address: 0x0001, name: 'fan_on', register_type: 'coil', data_type: 'bool', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Fan enable (on/off)' },
+  { address: 0x0002, name: 'e_stop', register_type: 'coil', data_type: 'bool', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Emergency stop' },
+]
+
+export const MODBUS_PRESETS: ModbusPreset[] = [
+  {
+    id: 'rustroast-standard',
+    name: 'rustRoast Standard',
+    description: 'Standard register layout matching the rustRoast backend Modbus server. Float32 temperatures, uint16 controls.',
+    registers: RUSTROAST_STANDARD,
+  },
+  {
+    id: 'artisan-compatible',
+    name: 'Artisan Compatible',
+    description: 'Register layout compatible with Artisan roasting software. Int16 temperatures (x10 scale), PID controller style.',
+    registers: ARTISAN_COMPATIBLE,
+  },
+  {
+    id: 'custom-empty',
+    name: 'Custom (Empty)',
+    description: 'Start with a blank register map and define your own registers.',
+    registers: [],
+  },
+]

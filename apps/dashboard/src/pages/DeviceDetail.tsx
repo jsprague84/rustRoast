@@ -12,6 +12,7 @@ import {
   ModbusRegisterMapEntry,
 } from '../api/client'
 import type { ModbusRegisterEntry } from './DeviceWizard'
+import { MODBUS_PRESETS } from '../lib/constants/modbus-presets'
 
 // ============================================================================
 // Constants & Helpers
@@ -786,19 +787,6 @@ function ConfigurationTab({ device }: {
 // Register Map Tab
 // ============================================================================
 
-const DEFAULT_REGISTER_MAP: ModbusRegisterEntry[] = [
-  { address: 0x0000, name: 'bean_temp', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: false, description: 'Bean temperature' },
-  { address: 0x0002, name: 'env_temp', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: false, description: 'Environment temperature' },
-  { address: 0x0004, name: 'rate_of_rise', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C/min', writable: false, description: 'Rate of rise' },
-  { address: 0x0006, name: 'heater_pwm', register_type: 'input', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: false, description: 'Heater PWM' },
-  { address: 0x0007, name: 'fan_pwm', register_type: 'input', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: false, description: 'Fan PWM' },
-  { address: 0x0000, name: 'setpoint', register_type: 'holding', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: true, description: 'Target bean temperature' },
-  { address: 0x0002, name: 'fan_pwm_setpoint', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Fan PWM setpoint' },
-  { address: 0x0003, name: 'heater_pwm_setpoint', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: true, description: 'Heater PWM setpoint' },
-  { address: 0x0004, name: 'control_mode', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Control mode: 0=manual, 1=auto' },
-  { address: 0x0005, name: 'heater_enable', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Heater enable: 0=off, 1=on' },
-  { address: 0x000C, name: 'emergency_stop', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Emergency stop: write 1 to trigger' },
-]
 
 function apiMapToEditorEntry(e: ModbusRegisterMapEntry): ModbusRegisterEntry {
   return {
@@ -868,9 +856,13 @@ function RegisterMapTab({ device }: {
     queryClient.invalidateQueries({ queryKey: ['register-map', device.id] })
   }
 
-  const handleLoadDefault = () => {
-    if (registers.length > 0 && !window.confirm('Replace current register map with default?')) return
-    setRegisters([...DEFAULT_REGISTER_MAP])
+  const handleLoadPreset = (presetId: string) => {
+    const preset = MODBUS_PRESETS.find(p => p.id === presetId)
+    if (!preset) return
+    if (registers.length > 0 && preset.registers.length > 0) {
+      if (!window.confirm('Replace current register map with this preset?')) return
+    }
+    setRegisters(preset.registers.map(r => ({ ...r })))
   }
 
   const smallSelect: React.CSSProperties = {
@@ -894,12 +886,19 @@ function RegisterMapTab({ device }: {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <button
-          onClick={handleLoadDefault}
-          style={{ padding: '6px 12px', border: '1px solid var(--color-gray-300, #d1d5db)', borderRadius: '6px', backgroundColor: '#fff', color: '#374151', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}
-        >
-          Load Default Map
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <label style={{ fontSize: '12px', color: '#6b7280' }}>Load Preset:</label>
+          <select
+            onChange={e => { if (e.target.value) { handleLoadPreset(e.target.value); e.target.value = '' } }}
+            defaultValue=""
+            style={{ padding: '6px 12px', border: '1px solid var(--color-gray-300, #d1d5db)', borderRadius: '6px', backgroundColor: '#fff', color: '#374151', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}
+          >
+            <option value="" disabled>Select a preset...</option>
+            {MODBUS_PRESETS.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
         <SaveButton onClick={handleSave} label="Save Map" />
       </div>
 

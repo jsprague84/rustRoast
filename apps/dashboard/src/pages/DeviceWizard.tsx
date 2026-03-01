@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, ConfiguredDevice, ConnectionProtocol, CreateRegisterMapEntry, DeviceInfo, DeviceProfile } from '../api/client'
+import { MODBUS_PRESETS } from '../lib/constants/modbus-presets'
 
 const STEPS = ['Device', 'Connections', 'Configuration', 'Review'] as const
 
@@ -650,21 +651,6 @@ function Step2Connections({ formData, onUpdate, testStates, onTestConnection }: 
   )
 }
 
-const DEFAULT_REGISTER_MAP: ModbusRegisterEntry[] = [
-  // Input registers (read-only, telemetry)
-  { address: 0x0000, name: 'bean_temp', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: false, description: 'Bean temperature (high word at 0x0000, low word at 0x0001)' },
-  { address: 0x0002, name: 'env_temp', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: false, description: 'Environment temperature (high word at 0x0002, low word at 0x0003)' },
-  { address: 0x0004, name: 'rate_of_rise', register_type: 'input', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C/min', writable: false, description: 'Rate of rise (high word at 0x0004, low word at 0x0005)' },
-  { address: 0x0006, name: 'heater_pwm', register_type: 'input', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: false, description: 'Heater PWM percentage (0-100)' },
-  { address: 0x0007, name: 'fan_pwm', register_type: 'input', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: false, description: 'Fan PWM value (0-255)' },
-  // Holding registers (read-write, control)
-  { address: 0x0000, name: 'setpoint', register_type: 'holding', data_type: 'float32', byte_order: 'ABCD', scale_factor: 1.0, offset: 0.0, unit: '\u00B0C', writable: true, description: 'Target bean temperature (high word at 0x0000, low word at 0x0001)' },
-  { address: 0x0002, name: 'fan_pwm_setpoint', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Fan PWM setpoint (0-255)' },
-  { address: 0x0003, name: 'heater_pwm_setpoint', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '%', writable: true, description: 'Heater PWM setpoint (0-100)' },
-  { address: 0x0004, name: 'control_mode', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Control mode: 0 = manual, 1 = auto' },
-  { address: 0x0005, name: 'heater_enable', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Heater enable: 0 = off, 1 = on' },
-  { address: 0x000C, name: 'emergency_stop', register_type: 'holding', data_type: 'uint16', byte_order: 'AB', scale_factor: 1.0, offset: 0.0, unit: '', writable: true, description: 'Emergency stop: write 1 to trigger' },
-]
 
 function emptyRegisterEntry(): ModbusRegisterEntry {
   return {
@@ -900,11 +886,13 @@ function Step3Configuration({ formData, onUpdate }: {
     onUpdate({ config: { ...cfg, ...updates } })
   }
 
-  const handleLoadDefaultMap = () => {
-    if (formData.register_map.length > 0) {
+  const handleLoadPreset = (presetId: string) => {
+    const preset = MODBUS_PRESETS.find(p => p.id === presetId)
+    if (!preset) return
+    if (formData.register_map.length > 0 && preset.registers.length > 0) {
       if (!window.confirm('This will replace the current register map. Continue?')) return
     }
-    onUpdate({ register_map: DEFAULT_REGISTER_MAP.map(r => ({ ...r })) })
+    onUpdate({ register_map: preset.registers.map(r => ({ ...r })) })
   }
 
   return (
@@ -1062,12 +1050,13 @@ function Step3Configuration({ formData, onUpdate }: {
       {/* Modbus Register Map (conditional) */}
       {modbusEnabled && (
         <CollapsibleSection title="Modbus Register Map">
-          <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'flex-end' }}>
-            <button
-              type="button"
-              onClick={handleLoadDefaultMap}
+          <div style={{ marginBottom: '12px', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px' }}>
+            <label style={{ fontSize: '13px', color: '#6b7280' }}>Load Preset:</label>
+            <select
+              onChange={e => { if (e.target.value) { handleLoadPreset(e.target.value); e.target.value = '' } }}
+              defaultValue=""
               style={{
-                padding: '6px 14px',
+                padding: '6px 12px',
                 border: '1px solid #3b82f6',
                 borderRadius: '6px',
                 backgroundColor: 'rgba(59, 130, 246, 0.05)',
@@ -1077,8 +1066,11 @@ function Step3Configuration({ formData, onUpdate }: {
                 cursor: 'pointer',
               }}
             >
-              Load Default Map
-            </button>
+              <option value="" disabled>Select a preset...</option>
+              {MODBUS_PRESETS.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
           </div>
           <RegisterMapEditor
             registers={formData.register_map}
