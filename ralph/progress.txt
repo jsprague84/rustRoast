@@ -19,6 +19,9 @@
 - AppState must be `pub(crate)` for route modules to extract it; service fields also need `pub(crate)`
 - AppError pattern: struct with StatusCode + message, impl IntoResponse to emit JSON `{ error, status }`, impl From<anyhow::Error>
 - Existing `/api/devices` was renamed to `/api/devices/registry` (in-memory MQTT device cache); new `/api/devices` serves persistent device config
+- Standalone server components (Modbus TCP) go in `src/modbus.rs` (not services.rs which is for DB services)
+- tokio-modbus 0.16 TCP server needs `features = ["tcp-server"]`; Service trait `call(&self)` requires Pin<Box<dyn Future>> for async ops
+- When starting background tasks that clone Arc'd state, order matters: clone before the consumer loop that takes ownership
 
 ---
 
@@ -100,4 +103,25 @@
   - Connection test endpoints should return 200 with success: false for failures, since a test failure is a valid result (not an API error)
   - The telemetry_cache key is the device_id string, and the value tuple has (json_payload, epoch_seconds) — check age by comparing epoch_secs against current time
   - For WebSocket testing, futures_util::StreamExt is needed to call `.next()` on the split read stream
+---
+
+## 2026-02-28 - DEV-006
+- Integrated Modbus TCP server into the backend using tokio-modbus 0.16 tcp-server feature
+- Server is disabled by default, enabled via RUSTROAST_MODBUS_ADDR env var (e.g. "0.0.0.0:502")
+- Default device_id configurable via RUSTROAST_MODBUS_DEVICE_ID env var (defaults to "esp32-001")
+- Input registers (read-only): 0x0000-0x0001 bean_temp (float32), 0x0002-0x0003 env_temp (float32), 0x0004-0x0005 rate_of_rise (float32), 0x0006 heater_pwm (uint16), 0x0007 fan_pwm (uint16)
+- Holding registers (read-write): 0x0000-0x0001 setpoint (float32), 0x0002 fan_pwm_setpoint, 0x0003 heater_pwm_setpoint, 0x0004 control_mode, 0x0005 heater_enable, 0x000C emergency_stop
+- Writes to holding registers publish corresponding MQTT control commands via MqttService
+- Each TCP connection gets its own Service instance via factory closure; all share Arc'd state with Axum server
+- Files changed:
+  - `crates/server/Cargo.toml` — Added `tcp-server` feature to tokio-modbus dependency
+  - `crates/server/src/modbus.rs` — New: RoasterModbusService implementing tokio_modbus::server::Service, ModbusSharedState, input/holding register read/write logic, MQTT command publishing, start_modbus_server() entry point
+  - `crates/server/src/main.rs` — Added `mod modbus`, call to `modbus::start_modbus_server()` before MQTT consumer loop (to clone telemetry_cache before it's moved)
+- **Learnings for future iterations:**
+  - tokio-modbus 0.16 TCP server requires `features = ["tcp-server"]` in Cargo.toml — the default features only include the TCP client
+  - The Service trait's `call(&self)` takes immutable reference; use Pin<Box<dyn Future + Send>> as the Future type to perform async operations (reading from tokio::sync::RwLock, publishing MQTT)
+  - Modbus TCP server is a standalone module (modbus.rs) rather than part of services.rs, since it's a server component not a database service
+  - When starting Modbus server before mqtt_consumer_loop, clone telemetry_cache first since mqtt_consumer_loop takes ownership
+  - Float32 values are encoded IEEE 754 big-endian across 2 consecutive 16-bit registers: high word at lower address, low word at higher address
+  - Holding registers 0x0006-0x000B are gap/reserved registers (no MQTT mapping) — reads return 0, writes are no-ops
 ---

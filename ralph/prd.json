@@ -133,7 +133,7 @@
         "cargo build succeeds, cargo clippy passes"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Context7: tokio-modbus server uses a Service trait with call() method. Each TCP connection gets its own Service instance via a factory closure. The Service reads from Arc<RwLock<HashMap>> in the existing telemetry cache. For writes, publish MQTT commands using the existing MqttService. The default device_id for Modbus register reads is configurable or uses the first device in the registry. Float32 values are encoded as IEEE 754 big-endian across 2 consecutive registers."
     },
     {
