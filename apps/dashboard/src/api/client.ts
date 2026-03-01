@@ -1,3 +1,77 @@
+// Re-export device types and API functions from their canonical locations
+export type {
+  ConfiguredDevice,
+  ConfiguredDeviceStatus,
+  ConfiguredDeviceWithConnections,
+  ConnectionProtocol,
+  CreateConnectionRequest,
+  CreateDeviceProfileRequest,
+  CreateDeviceRequest,
+  CreateRegisterMapEntry,
+  DeviceConnection,
+  DeviceProfile,
+  ModbusRegisterMapEntry,
+  TestConnectionRequest,
+  TestConnectionResponse,
+  UpdateConnectionRequest,
+  UpdateDeviceRequest,
+} from '../lib/types/device'
+
+export {
+  listDevices,
+  getDevice,
+  createDevice as createDeviceFn,
+  updateDevice as updateDeviceFn,
+  deleteDevice as deleteDeviceFn,
+  getDiscoveredDevices,
+  listDeviceProfiles,
+  getDeviceProfile,
+  createDeviceProfile as createDeviceProfileFn,
+  deleteDeviceProfile as deleteDeviceProfileFn,
+  addConnection,
+  updateConnection as updateConnectionFn,
+  removeConnection,
+  getRegisterMap,
+  setRegisterMap,
+  testConnection,
+} from '../lib/api/devices'
+
+import type {
+  ConfiguredDevice,
+  ConfiguredDeviceStatus,
+  ConfiguredDeviceWithConnections,
+  CreateConnectionRequest,
+  CreateDeviceProfileRequest,
+  CreateDeviceRequest,
+  CreateRegisterMapEntry,
+  DeviceConnection,
+  DeviceProfile,
+  ModbusRegisterMapEntry,
+  TestConnectionRequest,
+  TestConnectionResponse,
+  UpdateConnectionRequest,
+  UpdateDeviceRequest,
+} from '../lib/types/device'
+
+import {
+  listDevices,
+  getDevice,
+  createDevice as createDeviceFn,
+  updateDevice as updateDeviceFn,
+  deleteDevice as deleteDeviceFn,
+  getDiscoveredDevices,
+  listDeviceProfiles,
+  getDeviceProfile,
+  createDeviceProfile as createDeviceProfileFn,
+  deleteDeviceProfile as deleteDeviceProfileFn,
+  addConnection,
+  updateConnection as updateConnectionFn,
+  removeConnection,
+  getRegisterMap,
+  setRegisterMap,
+  testConnection,
+} from '../lib/api/devices'
+
 const BASE = '' // proxied in dev via Vite, same-origin in prod
 
 async function j<T>(url: string, init?: RequestInit): Promise<T> {
@@ -12,62 +86,30 @@ export const api = {
   // Devices (in-memory MQTT registry)
   devices: () => j<{ devices: DeviceInfo[] }>(`/api/devices/registry`),
 
-  // Device Configuration (persistent)
-  listConfiguredDevices: (status?: ConfiguredDeviceStatus) => {
-    const params = status ? `?status=${status}` : ''
-    return j<ConfiguredDevice[]>(`/api/devices${params}`)
-  },
-  getConfiguredDevice: (id: string) => j<ConfiguredDeviceWithConnections>(`/api/devices/${encodeURIComponent(id)}`),
-  getDiscoveredDevices: () => j<ConfiguredDevice[]>(`/api/devices/discovered`),
-  deleteConfiguredDevice: (id: string) => j<void>(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  createDevice: (req: CreateDeviceRequest) => j<ConfiguredDevice>(`/api/devices`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req),
-  }),
-  updateDevice: (id: string, req: UpdateDeviceRequest) => j<ConfiguredDevice>(`/api/devices/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req),
-  }),
+  // Device Configuration (persistent) — delegates to lib/api/devices.ts
+  listConfiguredDevices: (status?: ConfiguredDeviceStatus) => listDevices(status),
+  getConfiguredDevice: (id: string) => getDevice(id),
+  getDiscoveredDevices: () => getDiscoveredDevices(),
+  deleteConfiguredDevice: (id: string) => deleteDeviceFn(id),
+  createDevice: (req: CreateDeviceRequest) => createDeviceFn(req),
+  updateDevice: (id: string, req: UpdateDeviceRequest) => updateDeviceFn(id, req),
 
-  // Device Connections
-  testConnection: (req: TestConnectionRequest) => j<TestConnectionResponse>(`/api/devices/test-connection`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req),
-  }),
-  addConnection: (deviceId: string, req: CreateConnectionRequest) => j<DeviceConnection>(`/api/devices/${encodeURIComponent(deviceId)}/connections`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req),
-  }),
-  updateConnection: (deviceId: string, connId: string, req: UpdateConnectionRequest) => j<DeviceConnection>(`/api/devices/${encodeURIComponent(deviceId)}/connections/${encodeURIComponent(connId)}`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req),
-  }),
-  removeConnection: (deviceId: string, connId: string) => j<void>(`/api/devices/${encodeURIComponent(deviceId)}/connections/${encodeURIComponent(connId)}`, {
-    method: 'DELETE',
-  }),
+  // Device Connections — delegates to lib/api/devices.ts
+  testConnection: (req: TestConnectionRequest) => testConnection(req),
+  addConnection: (deviceId: string, req: CreateConnectionRequest) => addConnection(deviceId, req),
+  updateConnection: (deviceId: string, connId: string, req: UpdateConnectionRequest) => updateConnectionFn(deviceId, connId, req),
+  removeConnection: (deviceId: string, connId: string) => removeConnection(deviceId, connId),
 
-  // Register Map
-  getRegisterMap: (deviceId: string) => j<ModbusRegisterMapEntry[]>(`/api/devices/${encodeURIComponent(deviceId)}/register-map`),
-  setRegisterMap: (deviceId: string, registers: CreateRegisterMapEntry[]) => j<unknown>(`/api/devices/${encodeURIComponent(deviceId)}/register-map`, {
-    method: 'PUT',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(registers),
-  }),
+  // Register Map — delegates to lib/api/devices.ts
+  getRegisterMap: (deviceId: string) => getRegisterMap(deviceId),
+  setRegisterMap: (deviceId: string, registers: CreateRegisterMapEntry[]) => setRegisterMap(deviceId, registers),
 
-  // Device Profiles
-  listDeviceProfiles: () => j<DeviceProfile[]>(`/api/device-profiles`),
-  getDeviceProfile: (id: string) => j<DeviceProfile>(`/api/device-profiles/${encodeURIComponent(id)}`),
-  createDeviceProfile: (req: CreateDeviceProfileRequest) => j<DeviceProfile>(`/api/device-profiles`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(req),
-  }),
-  deleteDeviceProfile: (id: string) => j<void>(`/api/device-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  // Device Profiles — delegates to lib/api/devices.ts
+  listDeviceProfiles: () => listDeviceProfiles(),
+  getDeviceProfile: (id: string) => getDeviceProfile(id),
+  createDeviceProfile: (req: CreateDeviceProfileRequest) => createDeviceProfileFn(req),
+  deleteDeviceProfile: (id: string) => deleteDeviceProfileFn(id),
+
   // Telemetry
   latestTelemetry: (deviceId: string) => j<LatestTelemetryResponse>(`/api/roaster/${encodeURIComponent(deviceId)}/telemetry/latest`),
   telemetryHistory: (deviceId: string, since_secs = 3600, limit = 300) =>
@@ -286,136 +328,5 @@ export type UpdateRoastEventRequest = {
   notes?: string
 }
 
-// Device Configuration Types (persistent devices table)
-export type ConfiguredDeviceStatus = 'pending' | 'active' | 'disabled' | 'error'
-export type ConnectionProtocol = 'mqtt' | 'websocket' | 'modbus_tcp'
-
-export type ConfiguredDevice = {
-  id: string
-  name: string
-  device_id: string
-  profile_id?: string
-  status: ConfiguredDeviceStatus
-  description?: string
-  location?: string
-  created_at: string
-  updated_at: string
-  last_seen_at?: string
-}
-
-export type DeviceConnection = {
-  id: string
-  device_id: string
-  protocol: ConnectionProtocol
-  enabled: boolean
-  priority: number
-  config: Record<string, unknown>
-  created_at: string
-  updated_at: string
-}
-
-export type ConfiguredDeviceWithConnections = ConfiguredDevice & {
-  connections: DeviceConnection[]
-}
-
-export type CreateDeviceRequest = {
-  device_id: string
-  name: string
-  profile_id?: string
-  description?: string
-  location?: string
-}
-
-export type DeviceProfile = {
-  id: string
-  name: string
-  description?: string
-  default_control_mode?: string
-  default_setpoint?: number
-  default_fan_pwm?: number
-  default_kp?: number
-  default_ki?: number
-  default_kd?: number
-  max_temp?: number
-  min_fan_pwm?: number
-  telemetry_interval_ms?: number
-  created_at: string
-  updated_at: string
-}
-
-export type CreateDeviceProfileRequest = {
-  name: string
-  description?: string
-  default_control_mode?: string
-  default_setpoint?: number
-  default_fan_pwm?: number
-  default_kp?: number
-  default_ki?: number
-  default_kd?: number
-  max_temp?: number
-  min_fan_pwm?: number
-  telemetry_interval_ms?: number
-}
-
-// Connection testing types
-export type TestConnectionRequest = {
-  protocol: ConnectionProtocol
-  config: Record<string, unknown>
-  device_id?: string
-}
-
-export type TestConnectionResponse = {
-  success: boolean
-  message: string
-  latency_ms?: number
-}
-
-export type CreateConnectionRequest = {
-  protocol: ConnectionProtocol
-  enabled: boolean
-  priority?: number
-  config: Record<string, unknown>
-}
-
-export type UpdateDeviceRequest = {
-  name?: string
-  profile_id?: string
-  status?: ConfiguredDeviceStatus
-  description?: string
-  location?: string
-}
-
-export type UpdateConnectionRequest = {
-  enabled?: boolean
-  priority?: number
-  config?: Record<string, unknown>
-}
-
-export type ModbusRegisterMapEntry = {
-  id: string
-  device_id: string
-  register_type: string
-  address: number
-  name: string
-  data_type: string
-  byte_order: string
-  scale_factor: number
-  offset: number
-  unit?: string
-  description?: string
-  writable: boolean
-}
-
-export type CreateRegisterMapEntry = {
-  register_type: string
-  address: number
-  name: string
-  data_type: string
-  byte_order?: string
-  scale_factor?: number
-  offset?: number
-  unit?: string
-  description?: string
-  writable?: boolean
-}
+// Device Configuration Types — re-exported from lib/types/device.ts above
 
