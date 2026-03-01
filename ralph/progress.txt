@@ -155,6 +155,7 @@
 - The `api` object in `src/api/client.ts` is the single source for all API calls and type exports
 - App.tsx Tab type union controls navigation; new pages need: Tab value, nav link, ErrorBoundary wrapper, and import
 - `npm run build` (Vite) is the reliable quality check; `tsc --noEmit` has pre-existing failures due to missing type declarations
+- When adding new sub-pages under devices tab, add explicit match in handleNavigate BEFORE the generic `devices/` catch-all, AND exclude from device detail rendering condition
 ---
 
 ## 2026-02-28 - DEV-008
@@ -288,4 +289,26 @@
   - ConnectionRow uses local state for config editing — lifting to parent would be needed if cross-connection validation were required
   - RegisterMapTab initializes local state from API data once (initialized flag pattern) to avoid overwriting user edits on refetch
   - The `import type` syntax is needed for importing types from DeviceWizard.tsx (ModbusRegisterEntry) to avoid circular deps
+---
+
+## 2026-03-01 - DEV-014
+- Created device profile management UI page at /devices/profiles
+- Lists all device profiles with name, description, settings summary, and device count per profile
+- Profile cards show control defaults (mode/setpoint/fan PWM), safety limits (max temp/min fan PWM), and PID parameters (Kp/Ki/Kd)
+- "Create Profile" button opens modal form with fields: name, description, control mode, setpoint, fan PWM, max temp, min fan PWM, telemetry interval, PID Kp/Ki/Kd
+- Edit and delete actions per profile; delete warns if devices are using the profile
+- Device count per profile computed client-side by cross-referencing with the configured devices list
+- Added "Device Profiles" button to Devices list page header for navigation
+- Added createDeviceProfile, deleteDeviceProfile, getDeviceProfile API functions and CreateDeviceProfileRequest type to client.ts
+- Routed via deviceView === 'devices/profiles' in App.tsx (consistent with devices/new pattern)
+- Files changed:
+  - `apps/dashboard/src/pages/DeviceProfiles.tsx` — New: ProfileCard, ProfileForm, DeviceProfiles components
+  - `apps/dashboard/src/api/client.ts` — Added createDeviceProfile, deleteDeviceProfile, getDeviceProfile API functions; added CreateDeviceProfileRequest type
+  - `apps/dashboard/src/App.tsx` — Imported DeviceProfiles, added routing for devices/profiles path, excluded from device detail rendering
+  - `apps/dashboard/src/pages/Devices.tsx` — Added "Device Profiles" navigation button in page header
+- **Learnings for future iterations:**
+  - deviceView routing needs explicit string matches for sub-pages (e.g., 'devices/profiles') checked BEFORE generic prefix matches
+  - Device profile editing uses delete-then-recreate since the backend doesn't expose a PUT /api/device-profiles/:id endpoint
+  - Device count per profile is computed client-side since the backend list_profiles doesn't return usage counts — fetches both profiles and devices lists
+  - The 'devices/profiles' path must be excluded from the device detail rendering condition alongside 'devices/new'
 ---

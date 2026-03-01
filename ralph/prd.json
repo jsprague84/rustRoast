@@ -296,7 +296,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "Keep this page simple. Device profiles are templates, not complex entities. A straightforward list + create/edit form is sufficient."
     },
     {
