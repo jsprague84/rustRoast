@@ -88,7 +88,7 @@
         "npm run build succeeds"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Load function pattern: export const load = async ({ params, fetch }) => { const res = await fetch('/api/devices/' + params.id); if (!res.ok) error(404, 'Device not found'); return { device: await res.json() }; }. Use $state for edit mode toggle and form data. For connection test, use testConnection from '$lib/api/devices.js'. Connection config display should show human-readable summaries: MQTT shows topic_prefix, WebSocket shows URL, Modbus shows host:port. Use goto('/devices') from '$app/navigation' after delete."
     },
     {

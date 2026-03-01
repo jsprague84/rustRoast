@@ -23,6 +23,10 @@
 - tokio-modbus 0.16 TCP server needs `features = ["tcp-server"]`; Service trait `call(&self)` requires Pin<Box<dyn Future>> for async ops
 - When starting background tasks that clone Arc'd state, order matters: clone before the consumer loop that takes ownership
 - mqtt_consumer_loop uses `#[allow(clippy::too_many_arguments)]` since it legitimately needs many Arc'd caches plus services
+- Svelte 5 runes: `<svelte:component>` is deprecated — use dynamic component variables directly (`{@const Icon = fn()}, <Icon />`)
+- `{@const}` must be immediate child of block elements ({#each}, {#if}, etc.), not nested in HTML
+- Use `invalidateAll()` from `$app/navigation` after API mutations to re-run SvelteKit load functions
+- Register map data must be fetched separately via `getRegisterMap()` — not included in `ConfiguredDeviceWithConnections`
 - Auto-discovery creates device + MQTT connection in two calls; if connection creation fails, device still exists (partial success is acceptable)
 - Debounce HashMap<String, Instant> tracks per-device last-seen update times; no Arc needed since it's local to the consumer loop
 - Axum 0.7 (matchit) correctly handles literal routes like `/api/devices/discovered` alongside parameterized `/api/devices/:id` — literal takes priority
@@ -491,4 +495,26 @@
   - For multi-step wizards with conditional steps, use an `effectiveSteps` array and index into it for navigation
   - Protocol tab UI pattern: flex container with buttons, active gets `bg-amber-600 text-white`, inactive gets muted colors
   - Form inputs use: `bg-input border-border text-foreground focus:ring-amber-500` for consistent dark theme styling
+---
+
+## 2026-03-01 - SVELTE-004
+- Implemented device detail and edit page at `/devices/[id]`
+- Files created:
+  - `apps/dashboard/src/routes/devices/[id]/+page.ts` — SvelteKit load function fetching device with connections
+  - `apps/dashboard/src/routes/devices/[id]/+page.svelte` — Full detail/edit page
+- Features implemented:
+  - View mode: device name, status badge, device_id, description, location, last_seen_at
+  - Inline edit mode: toggle to edit name, description, location, status with save/cancel
+  - Delete device with confirmation dialog, redirects to /devices
+  - Connections section: list all connections with protocol icon, enabled toggle, config summary
+  - Add Connection inline form with protocol tabs (MQTT/WebSocket/Modbus TCP)
+  - Test Connection button per connection with result display
+  - Delete connection per entry
+  - Register Map section (shown if device has Modbus connection): read-only table with address, name, type, data_type, unit, writable
+  - Back to Devices link at top
+- **Learnings for future iterations:**
+  - In Svelte 5 runes mode, `<svelte:component>` is deprecated — use dynamic components directly (assign component to variable, render as `<Icon .../>`)
+  - `{@const}` must be an immediate child of block elements ({#each}, {#if}, etc.), not nested inside HTML elements
+  - Use `invalidateAll()` from `$app/navigation` to re-run load functions after mutations (update, delete connection, etc.)
+  - The `getRegisterMap` API must be called separately from the device load (not included in ConfiguredDeviceWithConnections)
 ---
