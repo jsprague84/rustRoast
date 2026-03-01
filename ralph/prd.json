@@ -96,7 +96,7 @@
         "cargo build succeeds, cargo clippy passes"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the same route organization pattern as sessions.rs and profiles.rs. Add a new routes/devices.rs file. Register routes in routes/mod.rs with the same public/protected split."
     },
     {
@@ -112,7 +112,7 @@
         "cargo build succeeds, cargo clippy passes"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "For MQTT testing, we check the in-memory telemetry cache rather than subscribing to a topic, since the server is already subscribed to roaster/+/telemetry. For Modbus, use tokio_modbus::client::tcp::connect with a timeout. Add tokio-modbus to Cargo.toml dependencies."
     },
     {

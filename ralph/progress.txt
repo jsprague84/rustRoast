@@ -15,6 +15,10 @@
 - serde_json::Value in FromRow structs requires: sqlx `json` feature in Cargo.toml + `#[sqlx(json)]` attribute on the field
 - When binding serde_json::Value to queries, convert to string first: `serde_json::to_string(&value)?`
 - set_register_map uses a transaction: DELETE all existing + INSERT new entries for atomic replacement
+- Route handlers can be separated into `routes/*.rs` files and merged via `Router::merge(device_routes())`
+- AppState must be `pub(crate)` for route modules to extract it; service fields also need `pub(crate)`
+- AppError pattern: struct with StatusCode + message, impl IntoResponse to emit JSON `{ error, status }`, impl From<anyhow::Error>
+- Existing `/api/devices` was renamed to `/api/devices/registry` (in-memory MQTT device cache); new `/api/devices` serves persistent device config
 
 ---
 
@@ -57,4 +61,43 @@
   - Dynamic update queries (conditional SET clauses) follow the same pattern as RoastSessionService.update_session: build query string, then bind in same order as SET clauses
   - set_register_map should use a SQLite transaction (`self.db.begin()`) for atomic delete-then-insert replacement
   - Pre-existing clippy issues should be fixed opportunistically to keep CI green
+---
+
+## 2026-02-28 - DEV-004
+- Added device management REST API endpoints with consistent JSON error responses
+- Created new routes module (`routes/`) to organize device handlers separately from main.rs
+- Files changed:
+  - `crates/server/src/routes/mod.rs` — New: module re-exporting device_routes()
+  - `crates/server/src/routes/devices.rs` — New: 15 route handlers for device CRUD, device profile CRUD, connection management, and register map endpoints. Includes AppError type for consistent JSON error responses.
+  - `crates/server/src/main.rs` — Added `mod routes`, imported `device_routes`, merged device routes into router, made AppState `pub(crate)`, renamed old `/api/devices` (in-memory registry) to `/api/devices/registry`
+  - `crates/server/src/models.rs` — Removed `#[allow(dead_code)]` from model/request structs now consumed by route handlers
+  - `crates/server/src/services.rs` — Removed `#[allow(dead_code)]` from DeviceService struct/impl, added it to individual methods not yet used (get_device_by_device_id, update_device_status, update_last_seen)
+- **Learnings for future iterations:**
+  - Route modules need AppState to be `pub(crate)` and service fields to be `pub(crate)` for extraction
+  - `Router::merge()` is the cleanest way to add a batch of routes from a separate module
+  - AppError with `From<anyhow::Error>` and `IntoResponse` enables `Result<T, AppError>` return types in handlers — much cleaner than match/error tuples
+  - The existing `/api/devices` endpoint returns in-memory MQTT device registry data; renamed to `/api/devices/registry` to avoid conflict with the new persistent device management endpoints
+  - Register map and connection routes verify device existence before operating, returning 404 if the device doesn't exist
+- tokio-modbus 0.16 `read_input_registers()` returns `Result<Result<Vec<u16>, ExceptionCode>>` — needs double `?` (`await??`) to unwrap both layers
+- Connection test endpoints return 200 with `success: false` for failed tests (not 4xx) since a failed test is a valid response
+- telemetry_cache stores `(serde_json::Value, u64)` where u64 is epoch seconds; make field `pub(crate)` for route module access
+
+---
+
+## 2026-02-28 - DEV-005
+- Added connection testing endpoint supporting MQTT, Modbus TCP, and WebSocket protocols
+- MQTT test checks in-memory telemetry cache for recent telemetry (within 30 seconds) for the specified device_id
+- Modbus TCP test uses tokio-modbus to connect with a 5-second timeout, reads input registers 0x0000-0x0001 (bean_temp)
+- WebSocket test uses tokio-tungstenite to attempt handshake and wait for first message with 5-second timeout
+- All test failures return HTTP 200 with `success: false` (not 4xx/5xx)
+- Files changed:
+  - `crates/server/Cargo.toml` — Added tokio-modbus 0.16, tokio-tungstenite 0.21, futures-util 0.3 dependencies
+  - `crates/server/src/models.rs` — Added TestConnectionRequest and TestConnectionResponse structs
+  - `crates/server/src/routes/devices.rs` — Added test_connection handler with per-protocol test functions (test_mqtt_connection, test_modbus_connection, test_websocket_connection), registered POST /api/devices/test-connection route
+  - `crates/server/src/main.rs` — Made telemetry_cache field pub(crate) for route module access
+- **Learnings for future iterations:**
+  - tokio-modbus 0.16 `read_input_registers()` returns `Result<Result<Vec<u16>, ExceptionCode>>` — requires double `?` to unwrap both the I/O error and the Modbus exception
+  - Connection test endpoints should return 200 with success: false for failures, since a test failure is a valid result (not an API error)
+  - The telemetry_cache key is the device_id string, and the value tuple has (json_payload, epoch_seconds) — check age by comparing epoch_secs against current time
+  - For WebSocket testing, futures_util::StreamExt is needed to call `.next()` on the split read stream
 ---

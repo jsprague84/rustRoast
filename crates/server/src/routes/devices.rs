@@ -1,3 +1,6 @@
+use std::net::SocketAddr;
+use std::time::Instant;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -6,7 +9,7 @@ use axum::{
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use tracing::error;
+use tracing::{error, info, warn};
 
 use crate::models::*;
 use crate::AppState;
@@ -101,6 +104,8 @@ pub fn device_routes() -> Router<AppState> {
         // Modbus Register Map
         .route("/api/devices/:id/register-map", get(get_register_map))
         .route("/api/devices/:id/register-map", put(set_register_map))
+        // Connection testing
+        .route("/api/devices/test-connection", post(test_connection))
 }
 
 // ============================================================================
@@ -296,4 +301,217 @@ async fn set_register_map(
         .get_register_map(&device_id)
         .await?;
     Ok(Json(updated))
+}
+
+// ============================================================================
+// Connection test handler
+// ============================================================================
+
+async fn test_connection(
+    State(state): State<AppState>,
+    Json(req): Json<TestConnectionRequest>,
+) -> Json<TestConnectionResponse> {
+    match req.protocol {
+        Protocol::Mqtt => test_mqtt_connection(&state, &req).await,
+        Protocol::ModbusTcp => test_modbus_connection(&req).await,
+        Protocol::WebSocket => test_websocket_connection(&req).await,
+    }
+}
+
+/// MQTT test: check the in-memory telemetry cache for recent data from the device.
+async fn test_mqtt_connection(
+    state: &AppState,
+    req: &TestConnectionRequest,
+) -> Json<TestConnectionResponse> {
+    let device_id = match &req.device_id {
+        Some(id) => id.clone(),
+        None => {
+            // Try to extract device_id from the topic_prefix config
+            if let Some(prefix) = req.config.get("topic_prefix").and_then(|v| v.as_str()) {
+                // topic_prefix is typically "roaster/{device_id}"
+                prefix.strip_prefix("roaster/").unwrap_or(prefix).to_string()
+            } else {
+                return Json(TestConnectionResponse {
+                    success: false,
+                    message: "No device_id provided and could not extract from topic_prefix".into(),
+                    latency_ms: None,
+                });
+            }
+        }
+    };
+
+    let cache = state.telemetry_cache.read().await;
+    if let Some((_val, ts)) = cache.get(&device_id) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let age_secs = now.saturating_sub(*ts);
+        if age_secs <= 30 {
+            Json(TestConnectionResponse {
+                success: true,
+                message: format!(
+                    "Receiving telemetry from device '{}' (last seen {}s ago)",
+                    device_id, age_secs
+                ),
+                latency_ms: Some(age_secs * 1000),
+            })
+        } else {
+            Json(TestConnectionResponse {
+                success: false,
+                message: format!(
+                    "Device '{}' last seen {}s ago (stale, threshold is 30s)",
+                    device_id, age_secs
+                ),
+                latency_ms: None,
+            })
+        }
+    } else {
+        Json(TestConnectionResponse {
+            success: false,
+            message: format!(
+                "No telemetry found for device '{}'. Ensure the device is powered on and publishing MQTT telemetry.",
+                device_id
+            ),
+            latency_ms: None,
+        })
+    }
+}
+
+/// Modbus TCP test: attempt a TCP connection and read input registers 0x0000-0x0001 (bean_temp).
+async fn test_modbus_connection(req: &TestConnectionRequest) -> Json<TestConnectionResponse> {
+    let config: ModbusTcpConnectionConfig = match serde_json::from_value(req.config.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(TestConnectionResponse {
+                success: false,
+                message: format!("Invalid Modbus TCP config: {}", e),
+                latency_ms: None,
+            });
+        }
+    };
+
+    let addr: SocketAddr = match format!("{}:{}", config.host, config.port).parse() {
+        Ok(a) => a,
+        Err(e) => {
+            return Json(TestConnectionResponse {
+                success: false,
+                message: format!("Invalid address '{}:{}': {}", config.host, config.port, e),
+                latency_ms: None,
+            });
+        }
+    };
+
+    let start = Instant::now();
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        use tokio_modbus::prelude::*;
+        let mut ctx = tcp::connect_slave(addr, Slave(config.unit_id)).await?;
+        let registers = ctx.read_input_registers(0x0000, 2).await??;
+        Ok::<Vec<u16>, Box<dyn std::error::Error + Send + Sync>>(registers)
+    })
+    .await;
+
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(Ok(registers)) => {
+            info!(
+                host = %config.host,
+                port = config.port,
+                unit_id = config.unit_id,
+                ?registers,
+                "Modbus TCP connection test succeeded"
+            );
+            Json(TestConnectionResponse {
+                success: true,
+                message: format!(
+                    "Connected to {}:{} (unit {}). Read registers 0x0000-0x0001: {:?}",
+                    config.host, config.port, config.unit_id, registers
+                ),
+                latency_ms: Some(latency_ms),
+            })
+        }
+        Ok(Err(e)) => {
+            warn!(
+                host = %config.host,
+                port = config.port,
+                error = %e,
+                "Modbus TCP connection test failed"
+            );
+            Json(TestConnectionResponse {
+                success: false,
+                message: format!(
+                    "Failed to connect to {}:{}: {}",
+                    config.host, config.port, e
+                ),
+                latency_ms: Some(latency_ms),
+            })
+        }
+        Err(_) => Json(TestConnectionResponse {
+            success: false,
+            message: format!(
+                "Connection to {}:{} timed out after 5 seconds",
+                config.host, config.port
+            ),
+            latency_ms: Some(5000),
+        }),
+    }
+}
+
+/// WebSocket test: attempt a handshake and wait for a message.
+async fn test_websocket_connection(req: &TestConnectionRequest) -> Json<TestConnectionResponse> {
+    let config: WebSocketConnectionConfig = match serde_json::from_value(req.config.clone()) {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(TestConnectionResponse {
+                success: false,
+                message: format!("Invalid WebSocket config: {}", e),
+                latency_ms: None,
+            });
+        }
+    };
+
+    let start = Instant::now();
+
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        use futures_util::StreamExt;
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&config.url).await?;
+        let (_write, mut read) = ws_stream.split();
+        // Wait for one message to confirm the connection is alive
+        if let Some(msg) = read.next().await {
+            msg?;
+        }
+        Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
+    })
+    .await;
+
+    let latency_ms = start.elapsed().as_millis() as u64;
+
+    match result {
+        Ok(Ok(())) => {
+            info!(url = %config.url, "WebSocket connection test succeeded");
+            Json(TestConnectionResponse {
+                success: true,
+                message: format!("Connected to {} and received a message", config.url),
+                latency_ms: Some(latency_ms),
+            })
+        }
+        Ok(Err(e)) => {
+            warn!(url = %config.url, error = %e, "WebSocket connection test failed");
+            Json(TestConnectionResponse {
+                success: false,
+                message: format!("Failed to connect to {}: {}", config.url, e),
+                latency_ms: Some(latency_ms),
+            })
+        }
+        Err(_) => Json(TestConnectionResponse {
+            success: false,
+            message: format!(
+                "Connection to {} timed out after 5 seconds",
+                config.url
+            ),
+            latency_ms: Some(5000),
+        }),
+    }
 }

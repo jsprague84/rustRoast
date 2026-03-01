@@ -36,7 +36,7 @@ use services::{RoastSessionService, DeviceService};
 #[derive(Clone)]
 pub(crate) struct AppState {
     mqtt: MqttService,
-    telemetry_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
+    pub(crate) telemetry_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
     autotune_status_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
     autotune_results_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
     device_registry: Arc<RwLock<HashMap<String, DeviceInfo>>>,

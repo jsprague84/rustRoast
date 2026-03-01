@@ -678,6 +678,23 @@ pub struct CreateRegisterMapEntry {
     pub writable: Option<bool>,
 }
 
+// ---- Connection test request/response ----
+
+#[derive(Debug, Deserialize)]
+pub struct TestConnectionRequest {
+    pub protocol: Protocol,
+    pub config: serde_json::Value,
+    pub device_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TestConnectionResponse {
+    pub success: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+}
+
 // ---- Typed protocol config structs ----
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
