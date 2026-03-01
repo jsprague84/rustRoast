@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { hasApiKey, setApiKey, clearApiKey } from '$lib/api/client.js';
+	import AutotunePanel from '$lib/components/AutotunePanel.svelte';
 
 	let apiKey = $state('');
 	let saved = $state(false);
@@ -29,10 +30,10 @@
 	<title>Settings | rustRoast</title>
 </svelte:head>
 
-<div class="max-w-lg">
+<div class="max-w-lg space-y-6">
 	<h1 class="text-2xl font-bold text-foreground">Settings</h1>
 
-	<div class="mt-6 rounded-lg border border-border bg-card p-4">
+	<div class="rounded-lg border border-border bg-card p-4">
 		<h2 class="text-lg font-semibold text-foreground">API Key</h2>
 		<p class="mt-1 text-sm text-muted-foreground">Required for controlling the roaster (setpoint, fan, heater, emergency stop).</p>
 
@@ -62,4 +63,6 @@
 			<p class="mt-2 text-sm text-green-400">API key saved.</p>
 		{/if}
 	</div>
+
+	<AutotunePanel />
 </div>
