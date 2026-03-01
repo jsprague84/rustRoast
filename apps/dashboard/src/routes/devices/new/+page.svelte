@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { createDevice, addConnection, setRegisterMap, testConnection, listDeviceProfiles } from '$lib/api/devices.js';
+	import { createDevice, updateDevice, getDevice, addConnection, setRegisterMap, testConnection, listDeviceProfiles, getDiscoveredDevices } from '$lib/api/devices.js';
 	import { MODBUS_PRESETS } from '$lib/constants/modbus-presets.js';
 	import type { ConnectionProtocol, CreateRegisterMapEntry, DeviceProfile, TestConnectionResponse } from '$lib/types/device.js';
 	import { ChevronLeft, ChevronRight, Check, Loader2, Wifi, Globe, Database } from 'lucide-svelte';
@@ -21,11 +21,27 @@
 	// Device profiles for dropdown
 	let profiles = $state<DeviceProfile[]>([]);
 
+	// If configuring a discovered device, track its existing UUID
+	let existingDeviceId = $state<string | null>(null);
+
 	onMount(async () => {
 		try {
 			profiles = await listDeviceProfiles();
 		} catch {
 			// Profiles are optional
+		}
+		// Check if this device_id already exists (auto-discovered)
+		if (deviceId) {
+			try {
+				const discovered = await getDiscoveredDevices();
+				const existing = discovered.find((d) => d.device_id === deviceId);
+				if (existing) {
+					existingDeviceId = existing.id;
+					name = name || existing.name;
+				}
+			} catch {
+				// Not critical
+			}
 		}
 	});
 
@@ -182,29 +198,55 @@
 		creating = true;
 		createError = '';
 		try {
-			// 1. Create the device
-			const device = await createDevice({
-				device_id: deviceId.trim(),
-				name: name.trim(),
-				profile_id: profileId || undefined,
-				description: description.trim() || undefined,
-				location: location.trim() || undefined,
-			});
+			let deviceUuid: string;
 
-			// 2. Add the connection
-			await addConnection(device.id, {
-				protocol,
-				enabled: true,
-				config: getConnectionConfig(),
-			});
+			if (existingDeviceId) {
+				// Update the existing auto-discovered device
+				const device = await updateDevice(existingDeviceId, {
+					name: name.trim(),
+					profile_id: profileId || undefined,
+					description: description.trim() || undefined,
+					location: location.trim() || undefined,
+					status: 'active',
+				});
+				deviceUuid = device.id;
+			} else {
+				// Create a new device
+				const device = await createDevice({
+					device_id: deviceId.trim(),
+					name: name.trim(),
+					profile_id: profileId || undefined,
+					description: description.trim() || undefined,
+					location: location.trim() || undefined,
+				});
+				deviceUuid = device.id;
+			}
+
+			// 2. Add the connection (skip if auto-discovered device already has one for this protocol)
+			let skipConnection = false;
+			if (existingDeviceId) {
+				try {
+					const full = await getDevice(existingDeviceId);
+					skipConnection = full.connections.some((c) => c.protocol === protocol);
+				} catch {
+					// Proceed with adding
+				}
+			}
+			if (!skipConnection) {
+				await addConnection(deviceUuid, {
+					protocol,
+					enabled: true,
+					config: getConnectionConfig(),
+				});
+			}
 
 			// 3. Set register map if Modbus
 			if (isModbus && registers.length > 0) {
-				await setRegisterMap(device.id, registers);
+				await setRegisterMap(deviceUuid, registers);
 			}
 
 			// 4. Navigate to device detail
-			goto(`/devices/${device.id}`);
+			goto(`/devices/${deviceUuid}`);
 		} catch (err) {
 			createError = err instanceof Error ? err.message : 'Failed to create device';
 		} finally {
