@@ -403,7 +403,7 @@
         "Minimal implementation checklist updated to include all three protocol options"
       ],
       "priority": 20,
-      "passes": false,
+      "passes": true,
       "notes": "Keep the existing MQTT section intact. Add the new protocol sections after it. The protocol comparison table should be honest about tradeoffs: MQTT is best for unreliable networks, WebSocket is simplest for direct connections, Modbus TCP is best for SCADA integration."
     }
   ]

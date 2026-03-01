@@ -414,3 +414,27 @@
   - The fetch helper `j<T>()` is duplicated in `lib/api/devices.ts` — a future refactor could extract it to a shared `lib/api/fetch.ts` utility
   - PRD references to SvelteKit patterns (fetch parameter for SSR) should be adapted to React equivalents — the standalone functions use global `fetch` directly
 ---
+
+## 2026-03-01 - DEV-020
+- Created `docs/hardware-integration-guide.md` — comprehensive hardware integration documentation
+- Guide covers all three communication protocols: MQTT, WebSocket, and Modbus TCP
+- Sections included:
+  - **Choosing a Protocol** — comparison table with recommendations (use case, complexity, libraries, bidirectional, firewall friendliness, auto-discovery, multiple devices, message format, latency)
+  - **Telemetry JSON Format** — field reference table with types, required/optional, and descriptions (shared by MQTT and WebSocket)
+  - **MQTT Connection** — server config, topic layout (published/subscribed), auto-discovery, ESP32 example code
+  - **WebSocket Connection** — endpoint docs, telemetry/control message format, connection lifecycle, ESP32 example code
+  - **Modbus TCP Connection** — server config, rustRoast Standard register map (input + holding), Artisan Compatible register map (input + holding + coil), float32 encoding, ESP32 Modbus slave example code
+  - **Minimal Implementation Checklist** — protocol-specific steps for each connection method
+- Register maps match the backend modbus.rs and frontend modbus-presets.ts exactly
+- All example code uses ArduinoJson + ESP32 libraries consistent with the existing firmware
+- Files changed:
+  - `docs/hardware-integration-guide.md` — New: 601-line comprehensive integration guide
+- **Learnings for future iterations:**
+  - The `docs/` directory did not exist before this story — it was created for the integration guide
+  - ESP32 technical documentation is in the parent repo at `../Esp32_FluidBedCoffeeRoaster/TECHNICAL_DOCUMENTATION.md`
+  - Telemetry JSON field names use camelCase (beanTemp, envTemp, heaterPWM) matching ESP32 firmware convention
+  - Control command payloads are plain strings (not JSON), except for PID which is `{"kp":15.0,"ki":1.0,"kd":25.0}`
+  - WebSocket control messages wrap MQTT-style topics: `{"type":"control","topic":"roaster/{device_id}/control/setpoint","payload":"200.0"}`
+  - Modbus float32 encoding uses IEEE 754 big-endian (ABCD) across 2 consecutive 16-bit registers
+  - The Artisan compatible register map uses int16 with scale_factor 0.1 (x10) convention for temperatures
+---
