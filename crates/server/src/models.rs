@@ -297,3 +297,402 @@ pub struct UpdateRoastEventRequest {
     pub temperature: Option<f32>,
     pub notes: Option<String>,
 }
+
+// ============================================================================
+// Device Configuration Models
+// ============================================================================
+
+/// Device status enum matching the `devices.status` column constraint.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceStatus {
+    Pending,
+    Active,
+    Disabled,
+    Error,
+}
+
+impl Type<sqlx::Sqlite> for DeviceStatus {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<sqlx::Sqlite>>::type_info()
+    }
+}
+
+impl<'r> Decode<'r, sqlx::Sqlite> for DeviceStatus {
+    fn decode(value: SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as Decode<sqlx::Sqlite>>::decode(value)?;
+        s.parse().map_err(Into::into)
+    }
+}
+
+impl<'q> Encode<'q, sqlx::Sqlite> for DeviceStatus {
+    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+        <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
+    }
+}
+
+impl std::fmt::Display for DeviceStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            DeviceStatus::Pending => "pending",
+            DeviceStatus::Active => "active",
+            DeviceStatus::Disabled => "disabled",
+            DeviceStatus::Error => "error",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::str::FromStr for DeviceStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(DeviceStatus::Pending),
+            "active" => Ok(DeviceStatus::Active),
+            "disabled" => Ok(DeviceStatus::Disabled),
+            "error" => Ok(DeviceStatus::Error),
+            _ => Err(format!("Invalid device status: {}", s)),
+        }
+    }
+}
+
+/// Connection protocol enum matching the `device_connections.protocol` column.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    Mqtt,
+    WebSocket,
+    ModbusTcp,
+}
+
+impl Type<sqlx::Sqlite> for Protocol {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<sqlx::Sqlite>>::type_info()
+    }
+}
+
+impl<'r> Decode<'r, sqlx::Sqlite> for Protocol {
+    fn decode(value: SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as Decode<sqlx::Sqlite>>::decode(value)?;
+        s.parse().map_err(Into::into)
+    }
+}
+
+impl<'q> Encode<'q, sqlx::Sqlite> for Protocol {
+    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+        <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
+    }
+}
+
+impl std::fmt::Display for Protocol {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Protocol::Mqtt => "mqtt",
+            Protocol::WebSocket => "websocket",
+            Protocol::ModbusTcp => "modbus_tcp",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::str::FromStr for Protocol {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "mqtt" => Ok(Protocol::Mqtt),
+            "websocket" => Ok(Protocol::WebSocket),
+            "modbus_tcp" => Ok(Protocol::ModbusTcp),
+            _ => Err(format!("Invalid protocol: {}", s)),
+        }
+    }
+}
+
+/// Modbus register type enum.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModbusRegisterType {
+    Input,
+    Holding,
+    Coil,
+    Discrete,
+}
+
+impl Type<sqlx::Sqlite> for ModbusRegisterType {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<sqlx::Sqlite>>::type_info()
+    }
+}
+
+impl<'r> Decode<'r, sqlx::Sqlite> for ModbusRegisterType {
+    fn decode(value: SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as Decode<sqlx::Sqlite>>::decode(value)?;
+        s.parse().map_err(Into::into)
+    }
+}
+
+impl<'q> Encode<'q, sqlx::Sqlite> for ModbusRegisterType {
+    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+        <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
+    }
+}
+
+impl std::fmt::Display for ModbusRegisterType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ModbusRegisterType::Input => "input",
+            ModbusRegisterType::Holding => "holding",
+            ModbusRegisterType::Coil => "coil",
+            ModbusRegisterType::Discrete => "discrete",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::str::FromStr for ModbusRegisterType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "input" => Ok(ModbusRegisterType::Input),
+            "holding" => Ok(ModbusRegisterType::Holding),
+            "coil" => Ok(ModbusRegisterType::Coil),
+            "discrete" => Ok(ModbusRegisterType::Discrete),
+            _ => Err(format!("Invalid modbus register type: {}", s)),
+        }
+    }
+}
+
+/// Modbus data type enum.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ModbusDataType {
+    Uint16,
+    Int16,
+    Float32,
+    Uint32,
+    Int32,
+    Bool,
+}
+
+impl Type<sqlx::Sqlite> for ModbusDataType {
+    fn type_info() -> SqliteTypeInfo {
+        <String as Type<sqlx::Sqlite>>::type_info()
+    }
+}
+
+impl<'r> Decode<'r, sqlx::Sqlite> for ModbusDataType {
+    fn decode(value: SqliteValueRef<'r>) -> Result<Self, sqlx::error::BoxDynError> {
+        let s = <String as Decode<sqlx::Sqlite>>::decode(value)?;
+        s.parse().map_err(Into::into)
+    }
+}
+
+impl<'q> Encode<'q, sqlx::Sqlite> for ModbusDataType {
+    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+        <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
+    }
+}
+
+impl std::fmt::Display for ModbusDataType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ModbusDataType::Uint16 => "uint16",
+            ModbusDataType::Int16 => "int16",
+            ModbusDataType::Float32 => "float32",
+            ModbusDataType::Uint32 => "uint32",
+            ModbusDataType::Int32 => "int32",
+            ModbusDataType::Bool => "bool",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::str::FromStr for ModbusDataType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "uint16" => Ok(ModbusDataType::Uint16),
+            "int16" => Ok(ModbusDataType::Int16),
+            "float32" => Ok(ModbusDataType::Float32),
+            "uint32" => Ok(ModbusDataType::Uint32),
+            "int32" => Ok(ModbusDataType::Int32),
+            "bool" => Ok(ModbusDataType::Bool),
+            _ => Err(format!("Invalid modbus data type: {}", s)),
+        }
+    }
+}
+
+// ---- Database row structs ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Device {
+    pub id: String,
+    pub name: String,
+    pub device_id: String,
+    pub profile_id: Option<String>,
+    pub status: DeviceStatus,
+    pub description: Option<String>,
+    pub location: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub last_seen_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeviceProfile {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub default_control_mode: Option<String>,
+    pub default_setpoint: Option<f64>,
+    pub default_fan_pwm: Option<i32>,
+    pub default_kp: Option<f64>,
+    pub default_ki: Option<f64>,
+    pub default_kd: Option<f64>,
+    pub max_temp: Option<f64>,
+    pub min_fan_pwm: Option<i32>,
+    pub telemetry_interval_ms: Option<i32>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeviceConnection {
+    pub id: String,
+    pub device_id: String,
+    pub protocol: Protocol,
+    pub enabled: bool,
+    pub priority: i32,
+    pub config: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ModbusRegisterMap {
+    pub id: String,
+    pub device_id: String,
+    pub register_type: ModbusRegisterType,
+    pub address: i32,
+    pub name: String,
+    pub data_type: ModbusDataType,
+    pub byte_order: Option<String>,
+    pub scale_factor: Option<f64>,
+    pub offset: Option<f64>,
+    pub unit: Option<String>,
+    pub description: Option<String>,
+    pub writable: bool,
+}
+
+// ---- API response structs ----
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceWithConnections {
+    #[serde(flatten)]
+    pub device: Device,
+    pub connections: Vec<DeviceConnection>,
+}
+
+// ---- API request structs ----
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDeviceRequest {
+    pub name: String,
+    pub device_id: String,
+    pub profile_id: Option<String>,
+    pub description: Option<String>,
+    pub location: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateDeviceRequest {
+    pub name: Option<String>,
+    pub profile_id: Option<String>,
+    pub status: Option<DeviceStatus>,
+    pub description: Option<String>,
+    pub location: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDeviceProfileRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub default_control_mode: Option<String>,
+    pub default_setpoint: Option<f64>,
+    pub default_fan_pwm: Option<i32>,
+    pub default_kp: Option<f64>,
+    pub default_ki: Option<f64>,
+    pub default_kd: Option<f64>,
+    pub max_temp: Option<f64>,
+    pub min_fan_pwm: Option<i32>,
+    pub telemetry_interval_ms: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateDeviceProfileRequest {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub default_control_mode: Option<String>,
+    pub default_setpoint: Option<f64>,
+    pub default_fan_pwm: Option<i32>,
+    pub default_kp: Option<f64>,
+    pub default_ki: Option<f64>,
+    pub default_kd: Option<f64>,
+    pub max_temp: Option<f64>,
+    pub min_fan_pwm: Option<i32>,
+    pub telemetry_interval_ms: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateConnectionRequest {
+    pub protocol: Protocol,
+    pub enabled: Option<bool>,
+    pub priority: Option<i32>,
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateConnectionRequest {
+    pub enabled: Option<bool>,
+    pub priority: Option<i32>,
+    pub config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateRegisterMapEntry {
+    pub register_type: ModbusRegisterType,
+    pub address: i32,
+    pub name: String,
+    pub data_type: ModbusDataType,
+    pub byte_order: Option<String>,
+    pub scale_factor: Option<f64>,
+    pub offset: Option<f64>,
+    pub unit: Option<String>,
+    pub description: Option<String>,
+    pub writable: Option<bool>,
+}
+
+// ---- Typed protocol config structs ----
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MqttConnectionConfig {
+    pub topic_prefix: String,
+    pub qos: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketConnectionConfig {
+    pub url: String,
+    pub reconnect_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModbusTcpConnectionConfig {
+    pub host: String,
+    pub port: u16,
+    pub unit_id: u8,
+    pub poll_interval_ms: u64,
+}
