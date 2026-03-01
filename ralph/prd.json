@@ -237,7 +237,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "The results object from the autotune event contains Kp, Ki, Kd as numbers. Current PID values come from the latest telemetry (telemetry store: $telemetry.Kp, $telemetry.Ki, $telemetry.Kd). Display as a comparison table: Current | Recommended columns. The apply endpoint sends the PID values to the ESP32 via MQTT. Use the notifications store from $lib/stores/notifications.ts for success/failure messages. Style the results section with bg-green-500/10 border-green-500/30 to indicate success."
     },
     {

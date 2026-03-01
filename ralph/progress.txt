@@ -233,3 +233,22 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - `transition-all duration-500` on the progress bar div gives a smooth animation as progress updates arrive via WebSocket
   - Import `telemetry` (readonly store) from telemetry.ts to access current BT in any component with `$telemetry?.beanTemp`
 ---
+
+## 2026-03-01 - AT-004
+- What was implemented: Autotune results display with apply/discard functionality
+  - Results section in AutotunePanel shows after autotune completes (when `autotuneState.results` is set and `isAutotuning` is false)
+  - Comparison table with Current (from telemetry Kp/Ki/Kd) vs Recommended (from autotune results) columns
+  - Apply button calls `applyResults(deviceId)` → POST /api/roaster/:device_id/autotune/apply, then shows success notification and dismisses results
+  - Discard button calls `dismissResults()` to clear the results display
+  - Failure notification shown if apply API call fails
+  - Results persist in store until explicitly dismissed (survive re-renders)
+  - On page load, `fetchLatestAutotune(deviceId)` already fetches both status and results from the backend
+  - Styled with green accent (bg-green-500/10, border-green-500/30) to indicate success
+- Files changed:
+  - `apps/dashboard/src/lib/components/AutotunePanel.svelte` — added imports (Check, X, applyResults, dismissResults), handleApply/handleDiscard functions, results comparison table, apply/discard buttons
+- **Learnings for future iterations:**
+  - Telemetry interface has optional `Kp`, `Ki`, `Kd` fields — use `$telemetry?.Kp != null` for null-safe access
+  - Ki values are typically very small (0.0001-0.01 range) — use `.toFixed(4)` for Ki vs `.toFixed(2)` for Kp/Kd
+  - The `fetchLatestAutotune` function already handles loading both status and results on page load — no additional fetch needed for results recovery
+  - Place the results section outside the `isAutotuning` conditional but still inside the main controls `div` — results should show alongside the Start button (not during active autotuning)
+---

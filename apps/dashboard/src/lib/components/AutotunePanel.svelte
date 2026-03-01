@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Play, Square, Zap } from 'lucide-svelte';
+	import { Play, Square, Zap, Check, X } from 'lucide-svelte';
 	import { deviceId, telemetry } from '$lib/stores/telemetry.js';
 	import { sessions, type RoastSession } from '$lib/api/client.js';
 	import { notifications } from '$lib/stores/notifications.js';
@@ -7,6 +7,8 @@
 		autotuneState,
 		startAutotune,
 		stopAutotune,
+		applyResults,
+		dismissResults,
 		initAutotuneSubscription,
 		destroyAutotuneSubscription,
 		fetchLatestAutotune
@@ -119,6 +121,27 @@
 			loading = false;
 		}
 	}
+
+	let applying = $state(false);
+
+	async function handleApply() {
+		if (!$deviceId) return;
+		applying = true;
+		try {
+			await applyResults($deviceId);
+			notifications.add('PID parameters applied successfully', 'success');
+			dismissResults();
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			notifications.add(`Failed to apply PID parameters: ${msg}`, 'error');
+		} finally {
+			applying = false;
+		}
+	}
+
+	function handleDiscard() {
+		dismissResults();
+	}
 </script>
 
 <div class="rounded-lg border border-border bg-card p-4">
@@ -217,6 +240,71 @@
 					<Play class="h-4 w-4" />
 					{loading ? 'Starting...' : 'Start Autotune'}
 				</button>
+			{/if}
+
+			{#if autotuneState.results && !autotuneState.isAutotuning}
+				<!-- Autotune results with comparison table -->
+				<div class="space-y-3 rounded-md border border-green-500/30 bg-green-500/10 p-3">
+					<h3 class="text-sm font-semibold text-green-400">Recommended PID Parameters</h3>
+
+					<table class="w-full text-sm">
+						<thead>
+							<tr class="text-xs text-muted-foreground">
+								<th class="pb-1 text-left font-medium">Parameter</th>
+								<th class="pb-1 text-right font-medium">Current</th>
+								<th class="pb-1 text-right font-medium">Recommended</th>
+							</tr>
+						</thead>
+						<tbody class="text-foreground">
+							<tr>
+								<td class="py-0.5">Kp</td>
+								<td class="py-0.5 text-right text-muted-foreground">
+									{$telemetry?.Kp != null ? $telemetry.Kp.toFixed(2) : '—'}
+								</td>
+								<td class="py-0.5 text-right font-medium text-green-400">
+									{autotuneState.results.Kp.toFixed(2)}
+								</td>
+							</tr>
+							<tr>
+								<td class="py-0.5">Ki</td>
+								<td class="py-0.5 text-right text-muted-foreground">
+									{$telemetry?.Ki != null ? $telemetry.Ki.toFixed(4) : '—'}
+								</td>
+								<td class="py-0.5 text-right font-medium text-green-400">
+									{autotuneState.results.Ki.toFixed(4)}
+								</td>
+							</tr>
+							<tr>
+								<td class="py-0.5">Kd</td>
+								<td class="py-0.5 text-right text-muted-foreground">
+									{$telemetry?.Kd != null ? $telemetry.Kd.toFixed(2) : '—'}
+								</td>
+								<td class="py-0.5 text-right font-medium text-green-400">
+									{autotuneState.results.Kd.toFixed(2)}
+								</td>
+							</tr>
+						</tbody>
+					</table>
+
+					<div class="flex gap-2">
+						<button
+							onclick={handleApply}
+							disabled={applying}
+							class="flex flex-1 items-center justify-center gap-2 rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+						>
+							<Check class="h-4 w-4" />
+							{applying ? 'Applying...' : 'Apply'}
+						</button>
+						<button
+							onclick={handleDiscard}
+							disabled={applying}
+							class="flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm font-medium text-foreground hover:bg-background disabled:opacity-50"
+						>
+							<X class="h-4 w-4" />
+							Discard
+						</button>
+					</div>
+				</div>
 			{/if}
 		</div>
 	{/if}
