@@ -312,3 +312,20 @@
   - Device count per profile is computed client-side since the backend list_profiles doesn't return usage counts — fetches both profiles and devices lists
   - The 'devices/profiles' path must be excluded from the device detail rendering condition alongside 'devices/new'
 ---
+
+## 2026-03-01 - DEV-015
+- Added device selector to dashboard and session creation, replacing hardcoded device_id
+- App.tsx fetches active configured devices via useQuery on /api/devices?status=active with auto-selection logic
+- UnifiedDashboard shows device selector dropdown when multiple active devices exist, no-devices setup prompt when none exist
+- Sessions CreateSessionForm shows device dropdown when multiple active devices, allowing user to pick which device for the session
+- Dashboard footer stats now show device name instead of raw device_id
+- Files changed:
+  - `apps/dashboard/src/App.tsx` — Added useQuery for active devices, auto-select effect, pass activeDevices/onDeviceChange/onNavigate to UnifiedDashboard and Sessions
+  - `apps/dashboard/src/pages/UnifiedDashboard.tsx` — Added activeDevices/onDeviceChange/onNavigate props, no-devices empty state, device selector dropdown in header, device name in footer stats
+  - `apps/dashboard/src/pages/Sessions.tsx` — Added activeDevices prop to Sessions and CreateSessionForm, device dropdown in session creation form when multiple devices
+- **Learnings for future iterations:**
+  - App.tsx auto-select effect should not include `deviceId` in deps to avoid infinite loop — it reads deviceId inside but only reacts to activeDevices changes
+  - UnifiedDashboard no-devices state returns early before the rest of the component, keeping the happy path clean
+  - CreateSessionForm device dropdown only shown when activeDevices.length > 1 (single device auto-uses the passed deviceId)
+  - The activeDevices query uses staleTime: 30000 to avoid excessive refetching since device configuration changes infrequently
+---

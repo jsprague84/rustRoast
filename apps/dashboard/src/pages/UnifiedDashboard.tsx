@@ -1,13 +1,16 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api, RoastSession } from '../api/client'
+import { api, RoastSession, ConfiguredDevice } from '../api/client'
 import { RoastControl } from '../components/RoastControl'
 
 type Props = {
   deviceId: string
+  activeDevices?: ConfiguredDevice[]
+  onDeviceChange?: (deviceId: string) => void
+  onNavigate?: (path: string) => void
 }
 
-export function UnifiedDashboard({ deviceId }: Props) {
+export function UnifiedDashboard({ deviceId, activeDevices = [], onDeviceChange, onNavigate }: Props) {
   const queryClient = useQueryClient()
 
   // Get sessions to find active session - optimized intervals
@@ -53,6 +56,46 @@ export function UnifiedDashboard({ deviceId }: Props) {
     totalSessions: sessions.length
   }), [sessions])
 
+  // No active devices — show setup message
+  if (activeDevices.length === 0) {
+    return (
+      <div style={{ padding: '1.5rem' }}>
+        <div className="card" style={{
+          textAlign: 'center',
+          padding: '3rem 2rem'
+        }}>
+          <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>📡</div>
+          <h2 style={{
+            margin: '0 0 0.75rem 0',
+            fontSize: '1.5rem',
+            fontWeight: '700',
+            color: 'var(--color-gray-900)'
+          }}>
+            No Active Devices
+          </h2>
+          <p style={{
+            margin: '0 0 1.5rem 0',
+            color: 'var(--color-gray-600)',
+            fontSize: '0.95rem'
+          }}>
+            Set up and activate a device to start roasting. Discovered devices will appear automatically when they connect via MQTT.
+          </p>
+          <button
+            onClick={() => onNavigate?.('devices/new')}
+            className="btn-primary"
+            style={{
+              fontSize: '14px',
+              fontWeight: '600',
+              padding: '12px 24px'
+            }}
+          >
+            Set Up a Device
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ padding: '1.5rem' }}>
       {/* Header with unified controls */}
@@ -67,12 +110,36 @@ export function UnifiedDashboard({ deviceId }: Props) {
             }}>
               rustRoast Dashboard
             </h1>
-            <p className="text-sm" style={{
-              margin: 0,
-              color: 'var(--color-gray-600)'
-            }}>
-              Unified control center with real-time monitoring and session management
-            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <p className="text-sm" style={{
+                margin: 0,
+                color: 'var(--color-gray-600)'
+              }}>
+                Unified control center with real-time monitoring and session management
+              </p>
+              {activeDevices.length > 1 && onDeviceChange && (
+                <select
+                  value={deviceId}
+                  onChange={e => onDeviceChange(e.target.value)}
+                  style={{
+                    padding: '0.375rem 0.75rem',
+                    border: '1px solid var(--color-gray-300)',
+                    borderRadius: '0.375rem',
+                    fontSize: '0.875rem',
+                    backgroundColor: 'var(--color-white)',
+                    color: 'var(--color-gray-900)',
+                    cursor: 'pointer',
+                    minWidth: '200px'
+                  }}
+                >
+                  {activeDevices.map(d => (
+                    <option key={d.id} value={d.device_id}>
+                      {d.name} ({d.device_id})
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
 
           {/* Quick Actions */}
@@ -213,9 +280,9 @@ export function UnifiedDashboard({ deviceId }: Props) {
 
         <div>
           <div className="font-bold" style={{ fontSize: '1.25rem', marginBottom: '0.25rem' }}>
-            {deviceId}
+            {activeDevices.find(d => d.device_id === deviceId)?.name || deviceId}
           </div>
-          <div className="text-xs" style={{ opacity: 0.8 }}>Device ID</div>
+          <div className="text-xs" style={{ opacity: 0.8 }}>Device ({deviceId})</div>
         </div>
 
         <div>

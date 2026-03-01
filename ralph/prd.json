@@ -313,7 +313,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "This connects the device configuration system to the existing roasting workflow. The telemetry WebSocket already receives messages for all devices; the frontend just needs to filter by device_id."
     },
     {

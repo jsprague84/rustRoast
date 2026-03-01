@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { api, ConfiguredDevice } from './api/client'
 import { Sessions } from './pages/Sessions'
 import { SessionDetail } from './pages/SessionDetail'
 import { Profiles } from './pages/Profiles'
@@ -21,6 +23,27 @@ export default function App() {
   const [deviceId, setDeviceId] = useState<string>('esp32_roaster_01')
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [deviceView, setDeviceView] = useState<string | null>(null)
+
+  // Fetch active configured devices for device selection
+  const { data: activeDevices = [] } = useQuery({
+    queryKey: ['configured-devices', 'active'],
+    queryFn: () => api.listConfiguredDevices('active'),
+    staleTime: 30000,
+    refetchInterval: 30000,
+  })
+
+  // Auto-select device when active devices change
+  useEffect(() => {
+    if (activeDevices.length === 1) {
+      setDeviceId(activeDevices[0].device_id)
+    } else if (activeDevices.length > 1) {
+      // Keep current selection if it's still valid, otherwise select first
+      const stillValid = activeDevices.some(d => d.device_id === deviceId)
+      if (!stillValid) {
+        setDeviceId(activeDevices[0].device_id)
+      }
+    }
+  }, [activeDevices])
 
   useEffect(() => {
     // hash routing light
@@ -175,10 +198,17 @@ export default function App() {
         {Nav}
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '1.5rem 1rem' }}>
           <ErrorBoundary>
-            {tab === 'roast' && <UnifiedDashboard deviceId={deviceId} />}
+            {tab === 'roast' && (
+              <UnifiedDashboard
+                deviceId={deviceId}
+                activeDevices={activeDevices}
+                onDeviceChange={setDeviceId}
+                onNavigate={handleNavigate}
+              />
+            )}
           </ErrorBoundary>
           <ErrorBoundary>
-            {tab === 'sessions' && !sessionId && <Sessions deviceId={deviceId} onNavigate={handleNavigate} />}
+            {tab === 'sessions' && !sessionId && <Sessions deviceId={deviceId} activeDevices={activeDevices} onNavigate={handleNavigate} />}
             {tab === 'sessions' && sessionId && <SessionDetail sessionId={sessionId} onNavigate={handleNavigate} />}
           </ErrorBoundary>
           <ErrorBoundary>

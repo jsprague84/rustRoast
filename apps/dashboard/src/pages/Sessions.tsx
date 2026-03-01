@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, RoastSession, CreateSessionRequest, SessionStatus } from '../api/client'
+import { api, RoastSession, CreateSessionRequest, SessionStatus, ConfiguredDevice } from '../api/client'
 import { useState } from 'react'
 
 function getStatusColor(status: SessionStatus): string {
@@ -151,7 +151,7 @@ function SessionCard({ session, onAction }: { session: RoastSession, onAction: (
   )
 }
 
-function CreateSessionForm({ deviceId, onClose }: { deviceId: string, onClose: () => void }) {
+function CreateSessionForm({ deviceId, activeDevices = [], onClose }: { deviceId: string, activeDevices?: ConfiguredDevice[], onClose: () => void }) {
   const queryClient = useQueryClient()
   const [formData, setFormData] = useState<CreateSessionRequest>({
     name: '',
@@ -230,6 +230,31 @@ function CreateSessionForm({ deviceId, onClose }: { deviceId: string, onClose: (
               required
             />
           </div>
+
+          {activeDevices.length > 1 && (
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>
+                Device
+              </label>
+              <select
+                value={formData.device_id}
+                onChange={e => setFormData({ ...formData, device_id: e.target.value })}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '6px',
+                  fontSize: '14px'
+                }}
+              >
+                {activeDevices.map(d => (
+                  <option key={d.id} value={d.device_id}>
+                    {d.name} ({d.device_id})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div style={{ marginBottom: '16px' }}>
             <label style={{ display: 'block', fontSize: '14px', fontWeight: '500', marginBottom: '4px' }}>
@@ -398,7 +423,7 @@ function CreateSessionForm({ deviceId, onClose }: { deviceId: string, onClose: (
   )
 }
 
-export function Sessions({ deviceId, onNavigate }: { deviceId: string, onNavigate: (path: string, sessionId?: string) => void }) {
+export function Sessions({ deviceId, activeDevices = [], onNavigate }: { deviceId: string, activeDevices?: ConfiguredDevice[], onNavigate: (path: string, sessionId?: string) => void }) {
   const queryClient = useQueryClient()
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [filterStatus, setFilterStatus] = useState<SessionStatus | 'all'>('all')
@@ -573,6 +598,7 @@ export function Sessions({ deviceId, onNavigate }: { deviceId: string, onNavigat
       {showCreateForm && (
         <CreateSessionForm
           deviceId={deviceId}
+          activeDevices={activeDevices}
           onClose={() => setShowCreateForm(false)}
         />
       )}
