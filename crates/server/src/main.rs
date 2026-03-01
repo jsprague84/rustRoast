@@ -1137,6 +1137,8 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     };
     // WAL for better concurrency
     let _ = sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await;
+    // Enforce foreign key constraints
+    sqlx::query("PRAGMA foreign_keys = ON;").execute(&pool).await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS telemetry (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

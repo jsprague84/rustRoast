@@ -92,6 +92,7 @@ pub fn device_routes() -> Router<AppState> {
         .route("/api/device-profiles", get(list_device_profiles))
         .route("/api/device-profiles/:id", get(get_device_profile))
         .route("/api/device-profiles", post(create_device_profile))
+        .route("/api/device-profiles/:id", put(update_device_profile))
         .route("/api/device-profiles/:id", delete(delete_device_profile))
         // Device Connection management
         .route("/api/devices/:id/connections", post(add_connection))
@@ -207,6 +208,19 @@ async fn create_device_profile(
 ) -> Result<(StatusCode, Json<DeviceProfile>), AppError> {
     let profile = state.device_service.create_profile(req).await?;
     Ok((StatusCode::CREATED, Json(profile)))
+}
+
+async fn update_device_profile(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateDeviceProfileRequest>,
+) -> Result<Json<DeviceProfile>, AppError> {
+    let profile = state
+        .device_service
+        .update_profile(&id, req)
+        .await?
+        .ok_or_else(|| AppError::not_found("Device profile"))?;
+    Ok(Json(profile))
 }
 
 async fn delete_device_profile(

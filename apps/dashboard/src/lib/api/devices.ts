@@ -82,6 +82,14 @@ export function createDeviceProfile(req: CreateDeviceProfileRequest): Promise<De
   })
 }
 
+export function updateDeviceProfile(id: string, req: Partial<CreateDeviceProfileRequest>): Promise<DeviceProfile> {
+  return j<DeviceProfile>(`/api/device-profiles/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: jsonHeaders,
+    body: JSON.stringify(req),
+  })
+}
+
 export function deleteDeviceProfile(id: string): Promise<void> {
   return j<void>(`/api/device-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }

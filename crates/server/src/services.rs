@@ -966,6 +966,46 @@ impl DeviceService {
         Ok(profile)
     }
 
+    pub async fn update_profile(&self, id: &str, req: UpdateDeviceProfileRequest) -> Result<Option<DeviceProfile>> {
+        let now = Utc::now();
+        let profile = sqlx::query_as::<_, DeviceProfile>(
+            r#"
+            UPDATE device_profiles SET
+                name = COALESCE(?, name),
+                description = COALESCE(?, description),
+                default_control_mode = COALESCE(?, default_control_mode),
+                default_setpoint = COALESCE(?, default_setpoint),
+                default_fan_pwm = COALESCE(?, default_fan_pwm),
+                default_kp = COALESCE(?, default_kp),
+                default_ki = COALESCE(?, default_ki),
+                default_kd = COALESCE(?, default_kd),
+                max_temp = COALESCE(?, max_temp),
+                min_fan_pwm = COALESCE(?, min_fan_pwm),
+                telemetry_interval_ms = COALESCE(?, telemetry_interval_ms),
+                updated_at = ?
+            WHERE id = ?
+            RETURNING *
+            "#
+        )
+        .bind(&req.name)
+        .bind(&req.description)
+        .bind(&req.default_control_mode)
+        .bind(req.default_setpoint)
+        .bind(req.default_fan_pwm)
+        .bind(req.default_kp)
+        .bind(req.default_ki)
+        .bind(req.default_kd)
+        .bind(req.max_temp)
+        .bind(req.min_fan_pwm)
+        .bind(req.telemetry_interval_ms)
+        .bind(now)
+        .bind(id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(profile)
+    }
+
     pub async fn delete_profile(&self, id: &str) -> Result<bool> {
         let result = sqlx::query("DELETE FROM device_profiles WHERE id = ?")
             .bind(id)

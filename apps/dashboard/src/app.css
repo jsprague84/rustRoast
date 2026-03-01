@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+
+@theme inline {
+	/* Background & foreground */
+	--color-background: oklch(0.145 0 0);
+	--color-foreground: oklch(0.985 0 0);
+
+	/* Card surfaces */
+	--color-card: oklch(0.205 0 0);
+	--color-card-foreground: oklch(0.985 0 0);
+
+	/* Muted / subdued elements */
+	--color-muted: oklch(0.269 0 0);
+	--color-muted-foreground: oklch(0.708 0 0);
+
+	/* Borders & inputs */
+	--color-border: oklch(1 0 0 / 10%);
+	--color-input: oklch(1 0 0 / 15%);
+	--color-ring: oklch(0.556 0 0);
+
+	/* Interactive accent (hover states) */
+	--color-accent: oklch(0.269 0 0);
+	--color-accent-foreground: oklch(0.985 0 0);
+
+	/* Primary action */
+	--color-primary: oklch(0.922 0 0);
+	--color-primary-foreground: oklch(0.205 0 0);
+
+	/* Secondary */
+	--color-secondary: oklch(0.269 0 0);
+	--color-secondary-foreground: oklch(0.985 0 0);
+
+	/* Destructive */
+	--color-destructive: oklch(0.704 0.191 22.216);
+
+	/* Sidebar */
+	--color-sidebar: oklch(0.16 0 0);
+	--color-sidebar-foreground: oklch(0.985 0 0);
+	--color-sidebar-accent: oklch(0.269 0 0);
+	--color-sidebar-border: oklch(1 0 0 / 10%);
+	--color-sidebar-muted: oklch(0.556 0 0);
+
+	/* Border radius */
+	--radius: 0.625rem;
+	--radius-sm: calc(var(--radius) - 4px);
+	--radius-md: calc(var(--radius) - 2px);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) + 4px);
+}
+
+/* Base element defaults */
+body {
+	background-color: var(--color-background);
+	color: var(--color-foreground);
+}
+
+/* Range input styling for dark theme */
+input[type='range'] {
+	background: transparent;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+	background: var(--color-muted);
+	border-radius: 4px;
+	height: 6px;
+}
+
+input[type='range']::-moz-range-track {
+	background: var(--color-muted);
+	border-radius: 4px;
+	height: 6px;
+}
+
+/* Number/text input dark defaults */
+input[type='number'],
+input[type='text'],
+input[type='password'] {
+	color-scheme: dark;
+}

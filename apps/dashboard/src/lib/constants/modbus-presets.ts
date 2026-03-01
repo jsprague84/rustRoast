@@ -1,4 +1,15 @@
-import type { ModbusRegisterEntry } from '../../pages/DeviceWizard'
+export type ModbusRegisterEntry = {
+  address: number
+  name: string
+  register_type: string
+  data_type: string
+  byte_order: string
+  scale_factor: number
+  offset: number
+  unit: string
+  writable: boolean
+  description: string
+}
 
 export type ModbusPreset = {
   id: string
