@@ -192,7 +192,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "The wizard is a single SvelteKit page with conditional rendering per step ({#if step === 0}...{/if}). Form data persists across steps in a $state object. No server-side form actions needed since this is an SPA; use the API client for submission."
     },
     {

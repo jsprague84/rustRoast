@@ -180,3 +180,24 @@
   - `npm install` is required before `npm run build` if node_modules is stale
   - Pre-existing chunk size warning (ECharts ~1MB) can be ignored
 ---
+
+## 2026-02-28 - DEV-009
+- Created device setup wizard with multi-step UI and Step 1 (Discovery & Identification) fully functional
+- Wizard has 4-step indicator (Device, Connections, Configuration, Review) with visual progress
+- Step 1 shows discovered devices section (from /api/devices/discovered) with MQTT registry enrichment (IP, firmware, RSSI)
+- Manual setup form with device_id (required), name (required), description, location fields
+- Device profile dropdown populated from /api/device-profiles
+- Selecting a discovered device auto-fills device_id and name
+- Next button disabled until required fields are filled
+- Steps 2-4 are placeholder shells for DEV-010/011/012
+- Files changed:
+  - `apps/dashboard/src/pages/DeviceWizard.tsx` — New: multi-step wizard component with StepIndicator, DiscoveredDeviceRow, Step1Device sub-components, WizardFormData type
+  - `apps/dashboard/src/api/client.ts` — Added DeviceProfile type, CreateDeviceRequest type, listDeviceProfiles and createDevice API functions
+  - `apps/dashboard/src/App.tsx` — Added deviceView state for device sub-routing, DeviceWizard import, routing logic for devices/new path with optional device_id query param, hash change resets deviceView
+- **Learnings for future iterations:**
+  - App.tsx sub-routing uses a string state (deviceView) similar to sessionId — null = list view, 'devices/new...' = wizard, other = detail page
+  - handleNavigate must check for exact 'devices' path BEFORE the `devices/` prefix catch-all to avoid the list view always showing
+  - Hash routing onHash handler should reset sub-view states (deviceView, sessionId) when navigating via nav links to prevent stale sub-views
+  - The DeviceWizard exports WizardFormData type so future step implementations (DEV-010/011/012) can extend it with additional fields
+  - Discovered devices are enriched with MQTT registry data (IP, firmware, RSSI) by cross-referencing with /api/devices/registry
+---
