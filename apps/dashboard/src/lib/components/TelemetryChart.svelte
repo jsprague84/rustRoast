@@ -3,6 +3,7 @@
 	import { telemetryHistory, rateOfRise } from '$lib/stores/telemetry.js';
 	import { landmarkColors, landmarkLabels } from '$lib/constants/landmarks.js';
 	import { profileState } from '$lib/stores/profile.svelte.js';
+	import { autotuneState } from '$lib/stores/autotune.svelte.js';
 
 	/** Optional landmark annotations to display on the chart. */
 	let { landmarks = [] }: { landmarks?: Array<{ type: string; elapsed_seconds: number; temperature?: number }> } = $props();
@@ -64,15 +65,33 @@
 				allTemps.push(temp);
 			}
 		}
+		if (autotuneState.targetTemp !== null && (autotuneState.isAutotuning || autotuneState.results !== null)) {
+			allTemps.push(autotuneState.targetTemp);
+		}
 		const maxTemp = Math.max(...allTemps);
 		const minTemp = Math.min(...allTemps);
 		const tempPadding = (maxTemp - minTemp) * 0.1 || 20;
 
-		const markLines = landmarks.map((l) => ({
+		type MarkLineItem = {
+			xAxis?: number;
+			yAxis?: number;
+			lineStyle: { color: string; type: 'dashed'; width: number };
+			label: { formatter: string; fontSize: number; color: string };
+		};
+		const markLines: MarkLineItem[] = landmarks.map((l) => ({
 			xAxis: l.elapsed_seconds * 1000,
 			lineStyle: { color: landmarkColors[l.type] ?? '#888', type: 'dashed' as const, width: 1 },
 			label: { formatter: landmarkLabels[l.type] ?? l.type, fontSize: 10, color: '#d1d5db' }
 		}));
+
+		// Autotune target horizontal line: show when autotuning or results pending
+		if ((autotuneState.isAutotuning || autotuneState.results !== null) && autotuneState.targetTemp !== null) {
+			markLines.push({
+				yAxis: autotuneState.targetTemp,
+				lineStyle: { color: '#f97316', type: 'dashed' as const, width: 1.5 },
+				label: { formatter: 'AT Target', fontSize: 10, color: '#f97316' }
+			});
+		}
 
 		const option: ECOption = {
 			title: { show: false },
