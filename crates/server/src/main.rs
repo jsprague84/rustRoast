@@ -26,6 +26,7 @@ use tower_http::services::{ServeDir, ServeFile};
 use std::path::PathBuf;
 
 mod models;
+mod modbus;
 mod routes;
 mod services;
 
@@ -227,6 +228,11 @@ async fn main() {
 
     info!(%addr, "Starting HTTP server");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    // Modbus TCP server (disabled unless RUSTROAST_MODBUS_ADDR is set)
+    let _modbus_handle = modbus::start_modbus_server(
+        telemetry_cache.clone(),
+        mqtt.clone(),
+    ).await;
     // Background consumer for MQTT events -> caches + metrics + persistence
     tokio::spawn(mqtt_consumer_loop(
         mqtt.clone(),

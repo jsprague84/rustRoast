@@ -23,6 +23,6 @@ utoipa-swagger-ui = { version = "7", features = ["axum"] }
 chrono = { version = "0.4.42", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 anyhow = "1.0.99"
-tokio-modbus = "0.16"
+tokio-modbus = { version = "0.16", features = ["tcp-server"] }
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
