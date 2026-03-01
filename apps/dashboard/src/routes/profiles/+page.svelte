@@ -110,12 +110,20 @@
 <div class="space-y-4">
 	<div class="flex items-center justify-between">
 		<h1 class="text-2xl font-bold text-foreground">Profiles</h1>
-		<button
-			onclick={() => (showImport = !showImport)}
-			class="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
-		>
-			Import Artisan
-		</button>
+		<div class="flex gap-2">
+			<button
+				onclick={() => (showImport = !showImport)}
+				class="rounded-md border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-accent"
+			>
+				Import Artisan
+			</button>
+			<a
+				href="/profiles/new"
+				class="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700"
+			>
+				New Profile
+			</a>
+		</div>
 	</div>
 
 	<!-- Import form -->
@@ -146,7 +154,7 @@
 	{#if data.profiles.length === 0}
 		<div class="mt-8 text-center">
 			<p class="text-muted-foreground">No profiles yet.</p>
-			<p class="mt-1 text-sm text-muted-foreground">Import an Artisan profile to get started.</p>
+			<p class="mt-1 text-sm text-muted-foreground">Create a new profile or import an Artisan profile to get started.</p>
 		</div>
 	{:else}
 		<div class="grid gap-4 md:grid-cols-2">
@@ -183,14 +191,17 @@
 								<p class="mt-1 text-sm text-muted-foreground">{selectedProfile.description}</p>
 							{/if}
 						</div>
-						{#if deleteConfirm === selectedProfile.id}
-							<div class="flex gap-1">
-								<button onclick={() => deleteProfile(selectedProfile!.id)} class="rounded bg-red-600 px-2 py-1 text-xs text-white">Confirm</button>
-								<button onclick={() => (deleteConfirm = null)} class="rounded border border-border px-2 py-1 text-xs text-muted-foreground">Cancel</button>
-							</div>
-						{:else}
-							<button onclick={() => (deleteConfirm = selectedProfile!.id)} class="text-xs text-red-400 hover:text-red-300">Delete</button>
-						{/if}
+						<div class="flex items-center gap-2">
+							<a href="/profiles/{selectedProfile.id}/edit" class="text-xs text-amber-400 hover:text-amber-300">Edit</a>
+							{#if deleteConfirm === selectedProfile.id}
+								<div class="flex gap-1">
+									<button onclick={() => deleteProfile(selectedProfile!.id)} class="rounded bg-red-600 px-2 py-1 text-xs text-white">Confirm</button>
+									<button onclick={() => (deleteConfirm = null)} class="rounded border border-border px-2 py-1 text-xs text-muted-foreground">Cancel</button>
+								</div>
+							{:else}
+								<button onclick={() => (deleteConfirm = selectedProfile!.id)} class="text-xs text-red-400 hover:text-red-300">Delete</button>
+							{/if}
+						</div>
 					</div>
 					{#if selectedProfile.charge_temp || selectedProfile.target_end_temp || selectedProfile.target_total_time}
 						<div class="mt-3 flex flex-wrap gap-3 text-sm">
