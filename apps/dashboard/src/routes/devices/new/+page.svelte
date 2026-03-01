@@ -60,6 +60,7 @@
 	let modbusHost = $state('');
 	let modbusPort = $state(502);
 	let modbusUnitId = $state(1);
+	let modbusPollInterval = $state(1000);
 
 	// Step 3: Register Map (Modbus only)
 	let selectedPresetId = $state('rustroast-standard');
@@ -170,7 +171,7 @@
 		if (protocol === 'websocket') {
 			return { url: wsUrl, reconnect_interval_ms: wsReconnectInterval };
 		}
-		return { host: modbusHost, port: modbusPort, unit_id: modbusUnitId };
+		return { host: modbusHost, port: modbusPort, unit_id: modbusUnitId, poll_interval_ms: modbusPollInterval };
 	}
 
 	// --- Test Connection ---
@@ -531,6 +532,22 @@
 							/>
 						</div>
 					</div>
+					<div>
+						<label for="modbus-poll" class="block text-sm font-medium text-foreground">
+							Poll Interval (ms)
+						</label>
+						<input
+							id="modbus-poll"
+							type="number"
+							bind:value={modbusPollInterval}
+							min={100}
+							step={100}
+							class="mt-1 w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500"
+						/>
+						<p class="mt-1 text-xs text-muted-foreground">
+							How often to read registers from the device (default: 1000ms)
+						</p>
+					</div>
 				{/if}
 			</div>
 		{:else if step === 3}
@@ -713,6 +730,10 @@
 						<div>
 							<span class="font-medium text-muted-foreground">Unit ID:</span>
 							<span class="ml-2 text-foreground">{modbusUnitId}</span>
+						</div>
+						<div>
+							<span class="font-medium text-muted-foreground">Poll Interval:</span>
+							<span class="ml-2 text-foreground">{modbusPollInterval}ms</span>
 						</div>
 					{/if}
 					{#if isModbus && registers.length > 0}
