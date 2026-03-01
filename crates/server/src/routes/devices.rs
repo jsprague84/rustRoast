@@ -80,6 +80,8 @@ pub struct DeviceListQuery {
 /// Read endpoints are public; mutation endpoints should be placed behind auth.
 pub fn device_routes() -> Router<AppState> {
     Router::new()
+        // Discovered devices (auto-created with status 'pending') — must be before :id
+        .route("/api/devices/discovered", get(list_discovered_devices))
         // Device CRUD
         .route("/api/devices", get(list_devices))
         .route("/api/devices/:id", get(get_device))
@@ -118,6 +120,16 @@ async fn list_devices(
 ) -> Result<Json<Vec<Device>>, AppError> {
     let status_filter = q.status.and_then(|s| s.parse::<DeviceStatus>().ok());
     let devices = state.device_service.list_devices(status_filter).await?;
+    Ok(Json(devices))
+}
+
+async fn list_discovered_devices(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<Device>>, AppError> {
+    let devices = state
+        .device_service
+        .list_devices(Some(DeviceStatus::Pending))
+        .await?;
     Ok(Json(devices))
 }
 

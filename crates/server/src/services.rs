@@ -768,7 +768,6 @@ impl DeviceService {
         Ok(Some(DeviceWithConnections { device, connections }))
     }
 
-    #[allow(dead_code)] // Used by MQTT consumer (DEV-007)
     pub async fn get_device_by_device_id(&self, device_id: &str) -> Result<Option<DeviceWithConnections>> {
         let device = sqlx::query_as::<_, Device>(
             "SELECT * FROM devices WHERE device_id = ?"
@@ -884,7 +883,7 @@ impl DeviceService {
         Ok(result.rows_affected() > 0)
     }
 
-    #[allow(dead_code)] // Used by MQTT consumer (DEV-007)
+    #[allow(dead_code)] // Will be used by device status transitions
     pub async fn update_device_status(&self, id: &str, status: DeviceStatus) -> Result<Option<Device>> {
         let device = sqlx::query_as::<_, Device>(
             "UPDATE devices SET status = ?, updated_at = ? WHERE id = ? RETURNING *"
@@ -898,7 +897,6 @@ impl DeviceService {
         Ok(device)
     }
 
-    #[allow(dead_code)] // Used by MQTT consumer (DEV-007)
     pub async fn update_last_seen(&self, device_id: &str) -> Result<()> {
         sqlx::query(
             "UPDATE devices SET last_seen_at = ? WHERE device_id = ?"

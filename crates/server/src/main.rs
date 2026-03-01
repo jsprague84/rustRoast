@@ -142,7 +142,7 @@ async fn main() {
         autotune_status_cache: autotune_status_cache.clone(),
         autotune_results_cache: autotune_results_cache.clone(),
         session_service,
-        device_service,
+        device_service: device_service.clone(),
     };
 
     // Static Swagger UI served at /docs; not generating OpenAPI from code for now
@@ -242,6 +242,7 @@ async fn main() {
         db.clone(),
         autotune_status_cache,
         autotune_results_cache,
+        device_service.clone(),
     ));
     // Retention cleanup task
     tokio::spawn(retention_cleanup_loop(db.clone()));
@@ -696,6 +697,7 @@ fn parse_roaster_topic(topic: &str) -> Option<(String, String)> {
 // OpenAPI generator removed for now to keep build stable; can be re-added
 
 // ----- Background MQTT consumer to fill caches + metrics -----
+#[allow(clippy::too_many_arguments)]
 async fn mqtt_consumer_loop(
     mqtt: MqttService,
     telemetry_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
@@ -704,8 +706,13 @@ async fn mqtt_consumer_loop(
     db: SqlitePool,
     autotune_status_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
     autotune_results_cache: Arc<RwLock<HashMap<String, (serde_json::Value, u64)>>>,
+    device_service: DeviceService,
 ) {
     let mut rx = mqtt.events();
+    // Debounce last-seen updates: at most once per 10 seconds per device
+    let mut last_seen_debounce: HashMap<String, std::time::Instant> = HashMap::new();
+    let debounce_interval = std::time::Duration::from_secs(10);
+
     loop {
         match rx.recv().await {
             Ok(rustroast_mqtt::MqttEvent::Connected) => metrics.mqtt_connected.set(1),
@@ -717,9 +724,66 @@ async fn mqtt_consumer_loop(
                     if kind == "telemetry" {
                         if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&payload) {
                             metrics.telemetry_last_seen.with_label_values(&[&device_id]).set(now as i64);
+                            // Always update telemetry cache (even for disabled devices)
                             telemetry_cache.write().await.insert(device_id.clone(), (val, now));
+
+                            // Auto-discover: if device_id is not in the devices table, create it with status 'pending'
+                            let device_status = match device_service.get_device_by_device_id(&device_id).await {
+                                Ok(Some(dev)) => Some(dev.device.status),
+                                Ok(None) => {
+                                    // Auto-create the device
+                                    let req = CreateDeviceRequest {
+                                        name: device_id.clone(),
+                                        device_id: device_id.clone(),
+                                        profile_id: None,
+                                        description: Some("Auto-discovered via MQTT".to_string()),
+                                        location: None,
+                                    };
+                                    match device_service.create_device(req).await {
+                                        Ok(dev) => {
+                                            // Add a default MQTT connection config derived from the topic
+                                            let mqtt_config = serde_json::json!({
+                                                "topic_prefix": format!("roaster/{}", device_id),
+                                                "qos": 0
+                                            });
+                                            let conn_req = CreateConnectionRequest {
+                                                protocol: Protocol::Mqtt,
+                                                enabled: Some(true),
+                                                priority: Some(0),
+                                                config: mqtt_config,
+                                            };
+                                            if let Err(e) = device_service.add_connection(&dev.id, conn_req).await {
+                                                tracing::warn!(%device_id, error = %e, "Failed to add default MQTT connection for auto-discovered device");
+                                            }
+                                            tracing::info!(%device_id, "Auto-discovered new device via MQTT");
+                                            Some(DeviceStatus::Pending)
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(%device_id, error = %e, "Failed to auto-create device");
+                                            None
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!(%device_id, error = %e, "Failed to look up device");
+                                    None
+                                }
+                            };
+
+                            // Debounced last-seen update
+                            let should_update = last_seen_debounce
+                                .get(&device_id)
+                                .map(|last| last.elapsed() >= debounce_interval)
+                                .unwrap_or(true);
+                            if should_update {
+                                if let Err(e) = device_service.update_last_seen(&device_id).await {
+                                    tracing::warn!(%device_id, error = %e, "Failed to update last_seen");
+                                }
+                                last_seen_debounce.insert(device_id.clone(), std::time::Instant::now());
+                            }
+
                             let payload_str = String::from_utf8_lossy(&payload).to_string();
-                            
+
                             // Store in general telemetry table
                             let _ = sqlx::query("INSERT INTO telemetry (device_id, ts, payload) VALUES (?, ?, ?)")
                                 .bind(&device_id)
@@ -727,30 +791,34 @@ async fn mqtt_consumer_loop(
                                 .bind(&payload_str)
                                 .execute(&db)
                                 .await;
-                            
-                            // Also store in session telemetry table for active sessions
-                            let _ = sqlx::query(r#"
-                                INSERT INTO session_telemetry (session_id, timestamp, bean_temp, env_temp, rate_of_rise, heater_pwm, fan_pwm, setpoint)
-                                SELECT s.id, ?, 
-                                       json_extract(?, '$.beanTemp'),
-                                       json_extract(?, '$.envTemp'), 
-                                       json_extract(?, '$.rateOfRise'),
-                                       json_extract(?, '$.heaterPWM'),
-                                       json_extract(?, '$.fanPWM'),
-                                       json_extract(?, '$.setpoint')
-                                FROM roast_sessions s 
-                                WHERE s.device_id = ? AND s.status = 'active'
-                            "#)
-                                .bind(now as i64)
-                                .bind(&payload_str)
-                                .bind(&payload_str)
-                                .bind(&payload_str)
-                                .bind(&payload_str)
-                                .bind(&payload_str)
-                                .bind(&payload_str)
-                                .bind(&device_id)
-                                .execute(&db)
-                                .await;
+
+                            // Skip session telemetry recording for disabled devices
+                            let is_disabled = device_status == Some(DeviceStatus::Disabled);
+                            if !is_disabled {
+                                // Store in session telemetry table for active sessions
+                                let _ = sqlx::query(r#"
+                                    INSERT INTO session_telemetry (session_id, timestamp, bean_temp, env_temp, rate_of_rise, heater_pwm, fan_pwm, setpoint)
+                                    SELECT s.id, ?,
+                                           json_extract(?, '$.beanTemp'),
+                                           json_extract(?, '$.envTemp'),
+                                           json_extract(?, '$.rateOfRise'),
+                                           json_extract(?, '$.heaterPWM'),
+                                           json_extract(?, '$.fanPWM'),
+                                           json_extract(?, '$.setpoint')
+                                    FROM roast_sessions s
+                                    WHERE s.device_id = ? AND s.status = 'active'
+                                "#)
+                                    .bind(now as i64)
+                                    .bind(&payload_str)
+                                    .bind(&payload_str)
+                                    .bind(&payload_str)
+                                    .bind(&payload_str)
+                                    .bind(&payload_str)
+                                    .bind(&payload_str)
+                                    .bind(&device_id)
+                                    .execute(&db)
+                                    .await;
+                            }
                         }
                     } else if kind == "status" {
                         if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&payload) {
