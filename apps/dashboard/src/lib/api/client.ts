@@ -268,3 +268,16 @@ export const profiles = {
 			body: JSON.stringify({ alog_content: alogContent, name })
 		})
 };
+
+// --- Settings API ---
+
+export const settings = {
+	get: () =>
+		request<Record<string, string>>('/api/settings'),
+
+	set: (key: string, value: string) =>
+		request<void>(`/api/settings/${encodeURIComponent(key)}`, {
+			method: 'PUT',
+			body: JSON.stringify({ value })
+		}, true)
+};

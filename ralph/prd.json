@@ -36,7 +36,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "Add the table in init_db alongside other CREATE TABLE statements in main.rs. For the endpoints, add them inline in main.rs following the pattern of other simple handlers. Settings GET returns all rows as { key: value } JSON object using a simple SELECT query. Settings PUT uses INSERT OR REPLACE (SQLite upsert). Frontend API client methods go in the existing $lib/api/client.ts file — add a new 'settings' export object similar to the profiles object."
     },
     {

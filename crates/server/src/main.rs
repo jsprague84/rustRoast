@@ -236,6 +236,9 @@ async fn main() {
         .route("/api/profiles/:id", put(api_update_profile))
         .route("/api/profiles/:id", delete(api_delete_profile))
         .route("/api/profiles/import/artisan", post(api_import_artisan_profile))
+        // Settings API
+        .route("/api/settings", get(api_get_settings))
+        .route("/api/settings/:key", put(api_set_setting))
         // Device Configuration API (DEV-004)
         .merge(device_routes())
         .with_state(state.clone());
@@ -1188,7 +1191,18 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     ).execute(&pool).await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_autotune_results_device_ts ON autotune_results(device_id, ts DESC);")
         .execute(&pool).await?;
-    
+    // Settings key-value table
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );"
+    ).execute(&pool).await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('profile_lookahead_seconds', '20');"
+    ).execute(&pool).await?;
+
     // Run migrations
     let migrations: &[&str] = &[
         include_str!("../migrations/001_roast_sessions.sql"),
@@ -1425,6 +1439,54 @@ async fn api_import_artisan_profile(State(state): State<AppState>, Json(req): Js
         Err(e) => {
             tracing::error!(?e, "Failed to import Artisan profile");
             (StatusCode::BAD_REQUEST, format!("Failed to import Artisan profile: {}", e)).into_response()
+        }
+    }
+}
+
+// ----- Settings API -----
+
+async fn api_get_settings(State(state): State<AppState>) -> Response {
+    let rows = sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
+        .fetch_all(&state.db)
+        .await;
+    match rows {
+        Ok(rows) => {
+            let map: serde_json::Map<String, serde_json::Value> = rows
+                .into_iter()
+                .map(|(k, v)| (k, serde_json::Value::String(v)))
+                .collect();
+            Json(serde_json::Value::Object(map)).into_response()
+        }
+        Err(e) => {
+            tracing::error!(?e, "Failed to get settings");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get settings").into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SetSettingRequest {
+    value: String,
+}
+
+async fn api_set_setting(
+    State(state): State<AppState>,
+    Path(key): Path<String>,
+    Json(req): Json<SetSettingRequest>,
+) -> Response {
+    let result = sqlx::query(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+    )
+    .bind(&key)
+    .bind(&req.value)
+    .execute(&state.db)
+    .await;
+    match result {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to set setting");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to set setting").into_response()
         }
     }
 }
