@@ -163,7 +163,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "The current profiles page already has an import flow that calls profiles.importArtisan() and saves directly. Change the flow to: (1) call importArtisan to parse and save, (2) redirect to /profiles/[newId]/edit to open in designer. OR: create a client-side parser that reads the .alog JSON and populates the designer without saving first. The simpler approach is to import via API (which saves), then redirect to the edit page. The existing import code is in src/routes/profiles/+page.svelte handleImport()."
     },
     {

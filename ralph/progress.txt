@@ -133,6 +133,21 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - Conditional grid items work cleanly with `{#if}` inside the grid — Tailwind grid auto-fills the extra cell
 ---
 
+## 2026-03-01 - PF-009
+- What was implemented: Artisan import redirects to profile designer for review/editing
+  - Changed `handleImport()` in profiles page to redirect to `/profiles/{id}/edit` after successful import
+  - Imported profile opens in ProfileDesigner so user can review and edit points before finalizing
+  - Added `goto` import from `$app/navigation` for redirect
+  - Success notification guides user to review imported data
+  - Error notifications for invalid files already handled by existing code
+- Files changed:
+  - `apps/dashboard/src/routes/profiles/+page.svelte` — modified handleImport to redirect to edit page
+- **Learnings for future iterations:**
+  - The simplest Artisan import-to-edit flow: import via API (saves to DB), then redirect to `/profiles/{id}/edit` — avoids client-side parsing
+  - `profiles.importArtisan()` returns `RoastProfile` with `id` — use it for the redirect path
+  - The ProfileDesigner edit route's `+page.ts` load function fetches the full profile with points, so the redirect "just works"
+---
+
 ## 2026-03-01 - PF-008
 - What was implemented: Profile selector in session creation flow
   - Added `profile_id` field to frontend `RoastSession` and `CreateSessionRequest` interfaces (backend already had it)
