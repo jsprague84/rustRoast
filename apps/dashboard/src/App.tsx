@@ -7,6 +7,7 @@ import { Settings } from './pages/Settings'
 import { AutoTune } from './pages/AutoTune'
 import { TestRoastControl } from './pages/TestRoastControl'
 import { Devices } from './pages/Devices'
+import { DeviceWizard } from './pages/DeviceWizard'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
 import { NotificationProvider } from './components/system/NotificationProvider'
 import { UpdatePrompt, OfflineIndicator } from './components/system/UpdatePrompt'
@@ -17,6 +18,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('roast')
   const [deviceId, setDeviceId] = useState<string>('esp32_roaster_01')
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [deviceView, setDeviceView] = useState<string | null>(null)
 
   useEffect(() => {
     // hash routing light
@@ -24,7 +26,12 @@ export default function App() {
     if (h) setTab(h)
     const onHash = () => {
       const t = window.location.hash.replace('#', '') as Tab
-      if (t) setTab(t)
+      if (t) {
+        setTab(t)
+        // Reset sub-views when navigating via hash links
+        if (t === 'devices') setDeviceView(null)
+        if (t !== 'sessions') setSessionId(null)
+      }
     }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
@@ -34,9 +41,22 @@ export default function App() {
     if (path.startsWith('session/')) {
       setTab('sessions')
       setSessionId(sessionIdParam || path.split('/')[1])
-    } else if (path.startsWith('device/') || path.startsWith('devices/')) {
-      // Device sub-routes (detail, new wizard) — stay on devices tab
+    } else if (path === 'devices') {
       setTab('devices')
+      setDeviceView(null)
+      setSessionId(null)
+      window.location.hash = 'devices'
+    } else if (path.startsWith('devices/new')) {
+      // Device wizard — extract optional device_id query param
+      setTab('devices')
+      setDeviceView(path)
+      setSessionId(null)
+      window.location.hash = 'devices'
+    } else if (path.startsWith('device/') || path.startsWith('devices/')) {
+      // Device detail/edit page
+      setTab('devices')
+      const id = path.replace(/^devices?\//, '')
+      setDeviceView(id)
       setSessionId(null)
       window.location.hash = 'devices'
     } else {
@@ -155,7 +175,17 @@ export default function App() {
             {tab === 'sessions' && sessionId && <SessionDetail sessionId={sessionId} onNavigate={handleNavigate} />}
           </ErrorBoundary>
           <ErrorBoundary>
-            {tab === 'devices' && <Devices onNavigate={handleNavigate} />}
+            {tab === 'devices' && !deviceView && <Devices onNavigate={handleNavigate} />}
+            {tab === 'devices' && deviceView?.startsWith('devices/new') && (
+              <DeviceWizard
+                initialDeviceId={
+                  deviceView.includes('device_id=')
+                    ? decodeURIComponent(deviceView.split('device_id=')[1].split('&')[0])
+                    : undefined
+                }
+                onNavigate={handleNavigate}
+              />
+            )}
           </ErrorBoundary>
           <ErrorBoundary>
             {tab === 'profiles' && <Profiles />}

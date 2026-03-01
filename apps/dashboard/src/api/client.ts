@@ -20,6 +20,14 @@ export const api = {
   getConfiguredDevice: (id: string) => j<ConfiguredDeviceWithConnections>(`/api/devices/${encodeURIComponent(id)}`),
   getDiscoveredDevices: () => j<ConfiguredDevice[]>(`/api/devices/discovered`),
   deleteConfiguredDevice: (id: string) => j<void>(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  createDevice: (req: CreateDeviceRequest) => j<ConfiguredDevice>(`/api/devices`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  }),
+
+  // Device Profiles
+  listDeviceProfiles: () => j<DeviceProfile[]>(`/api/device-profiles`),
   // Telemetry
   latestTelemetry: (deviceId: string) => j<LatestTelemetryResponse>(`/api/roaster/${encodeURIComponent(deviceId)}/telemetry/latest`),
   telemetryHistory: (deviceId: string, since_secs = 3600, limit = 300) =>
@@ -268,5 +276,30 @@ export type DeviceConnection = {
 
 export type ConfiguredDeviceWithConnections = ConfiguredDevice & {
   connections: DeviceConnection[]
+}
+
+export type CreateDeviceRequest = {
+  device_id: string
+  name: string
+  profile_id?: string
+  description?: string
+  location?: string
+}
+
+export type DeviceProfile = {
+  id: string
+  name: string
+  description?: string
+  default_control_mode?: string
+  default_setpoint?: number
+  default_fan_pwm?: number
+  default_kp?: number
+  default_ki?: number
+  default_kd?: number
+  max_temp?: number
+  min_fan_pwm?: number
+  telemetry_interval_ms?: number
+  created_at: string
+  updated_at: string
 }
 
