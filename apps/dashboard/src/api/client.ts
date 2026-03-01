@@ -25,6 +25,11 @@ export const api = {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(req),
   }),
+  updateDevice: (id: string, req: UpdateDeviceRequest) => j<ConfiguredDevice>(`/api/devices/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  }),
 
   // Device Connections
   testConnection: (req: TestConnectionRequest) => j<TestConnectionResponse>(`/api/devices/test-connection`, {
@@ -37,8 +42,17 @@ export const api = {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(req),
   }),
+  updateConnection: (deviceId: string, connId: string, req: UpdateConnectionRequest) => j<DeviceConnection>(`/api/devices/${encodeURIComponent(deviceId)}/connections/${encodeURIComponent(connId)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  }),
+  removeConnection: (deviceId: string, connId: string) => j<void>(`/api/devices/${encodeURIComponent(deviceId)}/connections/${encodeURIComponent(connId)}`, {
+    method: 'DELETE',
+  }),
 
   // Register Map
+  getRegisterMap: (deviceId: string) => j<ModbusRegisterMapEntry[]>(`/api/devices/${encodeURIComponent(deviceId)}/register-map`),
   setRegisterMap: (deviceId: string, registers: CreateRegisterMapEntry[]) => j<unknown>(`/api/devices/${encodeURIComponent(deviceId)}/register-map`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
@@ -340,6 +354,35 @@ export type CreateConnectionRequest = {
   enabled: boolean
   priority?: number
   config: Record<string, unknown>
+}
+
+export type UpdateDeviceRequest = {
+  name?: string
+  profile_id?: string
+  status?: ConfiguredDeviceStatus
+  description?: string
+  location?: string
+}
+
+export type UpdateConnectionRequest = {
+  enabled?: boolean
+  priority?: number
+  config?: Record<string, unknown>
+}
+
+export type ModbusRegisterMapEntry = {
+  id: string
+  device_id: string
+  register_type: string
+  address: number
+  name: string
+  data_type: string
+  byte_order: string
+  scale_factor: number
+  offset: number
+  unit?: string
+  description?: string
+  writable: boolean
 }
 
 export type CreateRegisterMapEntry = {

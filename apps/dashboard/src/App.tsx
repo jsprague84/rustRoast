@@ -8,6 +8,7 @@ import { AutoTune } from './pages/AutoTune'
 import { TestRoastControl } from './pages/TestRoastControl'
 import { Devices } from './pages/Devices'
 import { DeviceWizard } from './pages/DeviceWizard'
+import { DeviceDetail } from './pages/DeviceDetail'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
 import { NotificationProvider } from './components/system/NotificationProvider'
 import { UpdatePrompt, OfflineIndicator } from './components/system/UpdatePrompt'
@@ -183,6 +184,12 @@ export default function App() {
                     ? decodeURIComponent(deviceView.split('device_id=')[1].split('&')[0])
                     : undefined
                 }
+                onNavigate={handleNavigate}
+              />
+            )}
+            {tab === 'devices' && deviceView && !deviceView.startsWith('devices/new') && (
+              <DeviceDetail
+                deviceId={deviceView}
                 onNavigate={handleNavigate}
               />
             )}
