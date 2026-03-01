@@ -255,7 +255,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "The save operation requires multiple sequential API calls. If any call fails after the device is created, show a partial success message and redirect to the device edit page so the user can fix the remaining configuration."
     },
     {

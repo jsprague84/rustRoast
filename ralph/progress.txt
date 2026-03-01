@@ -246,3 +246,24 @@
   - Register map table uses inline editing for each cell — overflowX: auto handles narrow viewports
   - The "Load Default Map" confirms replacement if entries already exist (window.confirm)
 ---
+
+## 2026-03-01 - DEV-012
+- Implemented Step 4 (Review & Save) of the device setup wizard
+- Read-only summary of all configuration organized in sections: Device Info, Connections, Configuration, Modbus Register Map
+- Each connection shows test status (passed/not tested) with colored badge
+- Register map summary table shows address (hex), name, type, data type, writable status
+- Save action performs sequential API calls: POST /api/devices, POST /api/devices/:id/connections (per protocol), PUT /api/devices/:id/register-map
+- Partial failure handling: if device created but connections/register map fail, shows error and redirects to device edit page after 2s
+- Save button shows "Saving..." loading state, Back button disabled during save
+- Error messages displayed inline in a red alert box without losing form data
+- On success, redirects to /devices list
+- Added setRegisterMap and CreateRegisterMapEntry to api/client.ts
+- Files changed:
+  - `apps/dashboard/src/pages/DeviceWizard.tsx` — Added Step4Review component (ReviewSection, ReviewField helpers), handleSave async function with sequential API calls and partial failure handling, saving/saveError state, loading state on Save button, Back button disabled during save
+  - `apps/dashboard/src/api/client.ts` — Added setRegisterMap API function and CreateRegisterMapEntry type
+- **Learnings for future iterations:**
+  - Sequential API calls (create device -> add connections -> set register map) need careful error handling for partial success — device may exist even if later calls fail
+  - The `onSave` prop on Step4Review is not used directly by the component (save is triggered from the parent's nav button); the prop is included for flexibility but handleSave is called from the parent's button onClick
+  - CreateRegisterMapEntry fields must match the backend Rust struct exactly: register_type, address, name, data_type are required; byte_order, scale_factor, offset, unit, description, writable are optional
+  - `npm run build` (Vite) remains the reliable quality check; ECharts chunk size warning is expected and pre-existing
+---
