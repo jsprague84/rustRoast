@@ -6,6 +6,11 @@
 - Auth is frontend-only (Bearer header via requiresAuth flag); no backend middleware yet
 - Svelte 5 rune stores use `.svelte.ts` extension with exported `$state` objects; pure functions exported separately for testability
 - Profile/chart types (`ProfileWithPoints`, `ProfilePoint`) live in `$lib/api/client.ts` — import from there
+- Chart.svelte exposes `getInstance()` for attaching ECharts event handlers (getZr click, series click)
+- ECharts `convertFromPixel('grid', [offsetX, offsetY])` converts pixel click coords to data coordinates
+- Use `getZr().on('click')` with `!event.target` check for blank area clicks (add points)
+- Use `chart.on('click')` with `componentType === 'series'` for clicking on data points
+- Svelte 5 `$props()` values referenced outside reactive contexts trigger `state_referenced_locally` warning — extract to plain `const` variables to make intent clear
 
 # Ralph Progress Log
 Started: Sun Mar  1 05:07:32 PM CST 2026
@@ -42,4 +47,47 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - Pure functions (like `interpolateTarget`) should be exported separately from reactive state for testability
   - Profile points use `time_seconds` (number) — convert to ms by multiplying by 1000 for chart compatibility
   - Types `ProfileWithPoints` and `ProfilePoint` are defined in `$lib/api/client.ts`, not in a separate types file
+---
+
+## 2026-03-01 - PF-004
+- What was implemented: Profile designer with visual chart editor
+  - Created `ProfileDesigner.svelte` component with ECharts scatter+line chart
+  - Click on blank chart area to add new profile points (time/temp)
+  - Click existing points to select, edit via input fields, delete via button or keyboard Delete key
+  - Table view toggle: switch between chart and editable data table for all points
+  - Profile metadata inputs: name (required), description, charge_temp, target_end_temp
+  - Save button calls `profiles.create()` for new or `profiles.update()` for existing
+  - Cancel button navigates back to /profiles
+  - New routes: `/profiles/new` and `/profiles/[id]/edit` with load function
+  - Added "New Profile" and "Edit" buttons to profiles list page
+- Files changed:
+  - `apps/dashboard/src/lib/components/ProfileDesigner.svelte` — new component
+  - `apps/dashboard/src/routes/profiles/new/+page.svelte` — new route
+  - `apps/dashboard/src/routes/profiles/[id]/edit/+page.ts` — load function
+  - `apps/dashboard/src/routes/profiles/[id]/edit/+page.svelte` — edit route
+  - `apps/dashboard/src/routes/profiles/+page.svelte` — added New/Edit buttons
+- **Learnings for future iterations:**
+  - Chart.svelte's `getInstance()` returns the ECharts instance for attaching event handlers
+  - Use `getZr().on('click')` + `convertFromPixel('grid', ...)` for blank area click-to-add
+  - Use `chart.on('click')` with series name filter for selecting existing points
+  - ECharts tooltip formatter must use `unknown` param type (not specific interface) due to ECOption type constraints
+  - Svelte 5 props referenced at top level trigger `state_referenced_locally` warnings — intentional for initialization-only values; extract to `const` to document intent
+  - `$state` arrays support `.push()`, `.splice()`, `.sort()` mutations directly (Svelte 5 proxies)
+  - Use `bind:this={chartComponent}` then `chartComponent.getInstance()` to access Chart internals
+---
+
+## 2026-03-01 - PF-005
+- What was implemented: Profile overlay on telemetry chart
+  - Imported `profileState` from profile store into TelemetryChart.svelte
+  - When `activeProfile` has points, adds a 'Profile' series: dashed purple (#a855f7) line on the temperature Y-axis
+  - Profile points converted from seconds to milliseconds to match telemetry X-axis
+  - Profile temperatures included in Y-axis bounds calculation so the axis auto-scales correctly
+  - Profile series conditionally spread into the series array (no extra series when no profile loaded)
+- Files changed:
+  - `apps/dashboard/src/lib/components/TelemetryChart.svelte` — added import, profile data extraction, profile series
+- **Learnings for future iterations:**
+  - Use spread operator `...(condition ? [item] : [])` to conditionally include series in the ECharts series array
+  - Profile overlay uses yAxisIndex: 0 (temperature axis, same as BT/ET) — no need to specify it since 0 is the default
+  - `profileState.activeProfile` is reactive in `$derived.by` — reading it inside the derivation auto-tracks changes
+  - Include profile temps in allTemps for Y-axis bounds so the chart scales to show the full profile curve
 ---

@@ -2,6 +2,7 @@
 	import Chart, { type ECOption } from './Chart.svelte';
 	import { telemetryHistory, rateOfRise } from '$lib/stores/telemetry.js';
 	import { landmarkColors, landmarkLabels } from '$lib/constants/landmarks.js';
+	import { profileState } from '$lib/stores/profile.svelte.js';
 
 	/** Optional landmark annotations to display on the chart. */
 	let { landmarks = [] }: { landmarks?: Array<{ type: string; elapsed_seconds: number; temperature?: number }> } = $props();
@@ -49,8 +50,20 @@
 			}
 		}
 
+		// Build profile overlay data if a profile is loaded
+		const activeProfile = profileState.activeProfile;
+		const profileData = activeProfile?.points
+			?.slice()
+			.sort((a, b) => a.time_seconds - b.time_seconds)
+			.map((p) => [p.time_seconds * 1000, p.target_temp]) ?? [];
+
 		// Dynamic Y-axis bounds with 10% padding
 		const allTemps = h.flatMap((p) => [p.telemetry.beanTemp, p.telemetry.envTemp]);
+		if (profileData.length > 0) {
+			for (const [, temp] of profileData) {
+				allTemps.push(temp);
+			}
+		}
 		const maxTemp = Math.max(...allTemps);
 		const minTemp = Math.min(...allTemps);
 		const tempPadding = (maxTemp - minTemp) * 0.1 || 20;
@@ -161,7 +174,19 @@
 					lineStyle: { width: 0 },
 					areaStyle: { opacity: 0.15 },
 					showSymbol: false
-				}
+				},
+				...(profileData.length > 0
+					? [
+							{
+								name: 'Profile',
+								type: 'line' as const,
+								data: profileData,
+								itemStyle: { color: '#a855f7' },
+								lineStyle: { type: 'dashed' as const, width: 2 },
+								showSymbol: false
+							}
+						]
+					: [])
 			]
 		};
 

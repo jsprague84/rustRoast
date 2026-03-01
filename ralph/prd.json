@@ -77,7 +77,7 @@
         "npm run build succeeds"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "Use the existing Chart.svelte wrapper component. For click-to-add, listen to the ECharts 'click' event on the chart instance. Use ECharts scatter series for draggable points overlaid on a line series. For the table view, use a simple HTML table with input fields bound to point data via $state. The designer should accept an optional profileId prop — if provided, load existing profile data for editing. Route /profiles/new renders ProfileDesigner with no initial data. Route /profiles/[id]/edit loads profile via a +page.ts load function and passes data to ProfileDesigner. Use goto('/profiles') from $app/navigation on cancel/save. Chart styling should match existing TelemetryChart colors (dark theme, amber accents)."
     },
     {
@@ -94,7 +94,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "Import the profile store in TelemetryChart.svelte. In the $derived.by chart option computation, check if activeProfile has points. If so, add a new series to the series array: { name: 'Profile', type: 'line', data: points.map(p => [p.time_seconds * 1000, p.target_temp]), itemStyle: { color: '#a855f7' }, lineStyle: { type: 'dashed', width: 2 }, showSymbol: false }. The profile uses yAxisIndex: 0 (temperature axis, same as BT/ET). No markLine needed — it's a full series."
     },
     {
