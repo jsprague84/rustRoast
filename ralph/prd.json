@@ -171,7 +171,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the same page patterns as sessions/+page.svelte. Use relative time display for last_seen (e.g., '2 minutes ago', 'offline')."
     },
     {

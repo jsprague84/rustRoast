@@ -26,6 +26,10 @@
 - Auto-discovery creates device + MQTT connection in two calls; if connection creation fails, device still exists (partial success is acceptable)
 - Debounce HashMap<String, Instant> tracks per-device last-seen update times; no Arc needed since it's local to the consumer loop
 - Axum 0.7 (matchit) correctly handles literal routes like `/api/devices/discovered` alongside parameterized `/api/devices/:id` — literal takes priority
+- Frontend is React (not SvelteKit) with hash-based routing; pages are tab components in `src/pages/`, not file-based routes
+- Use `@tanstack/react-query` (useQuery/useMutation) for data fetching; types/API functions export from `src/api/client.ts`
+- App.tsx Tab union type + nav links + ErrorBoundary wrappers control page visibility
+- `npm run build` (Vite) is the reliable quality check; `tsc --noEmit` has pre-existing failures
 
 ---
 
@@ -146,4 +150,33 @@
   - Auto-discovery uses get_device_by_device_id (looks up by device_id string, not internal UUID) — important distinction from get_device (which uses internal id)
   - The device status check happens once per telemetry message; for high-frequency telemetry this adds a DB lookup per message. A future optimization could cache device statuses in memory.
   - Axum 0.7 route ordering: literal path segments like `/api/devices/discovered` take priority over parameterized `/api/devices/:id` regardless of registration order
+- The frontend is React (not SvelteKit) with hash-based routing in App.tsx — pages are tab components, not file-based routes
+- Frontend uses `@tanstack/react-query` for data fetching; new pages follow the `useQuery` pattern from Sessions.tsx
+- The `api` object in `src/api/client.ts` is the single source for all API calls and type exports
+- App.tsx Tab type union controls navigation; new pages need: Tab value, nav link, ErrorBoundary wrapper, and import
+- `npm run build` (Vite) is the reliable quality check; `tsc --noEmit` has pre-existing failures due to missing type declarations
+---
+
+## 2026-02-28 - DEV-008
+- Created device list page in the dashboard with full device management UI
+- Added persistent device configuration types and API functions to client.ts
+- Rewrote Devices.tsx from simple picker to full management page with:
+  - Pending/discovered devices section (amber border, configure button)
+  - Configured devices grid (card layout with status badges, relative time)
+  - Status badges using existing CSS classes (status-online, status-warning, status-offline)
+  - Empty state with messaging
+  - Add Device button linking to wizard route
+- Updated App.tsx navigation with Devices tab between Sessions and Profiles
+- Updated api.devices() to call `/api/devices/registry` (matching backend rename from DEV-004)
+- Files changed:
+  - `apps/dashboard/src/api/client.ts` — Added ConfiguredDevice, DeviceConnection, ConfiguredDeviceWithConnections types; added listConfiguredDevices, getConfiguredDevice, getDiscoveredDevices, deleteConfiguredDevice API functions; updated devices() to use /api/devices/registry
+  - `apps/dashboard/src/pages/Devices.tsx` — Complete rewrite: DeviceCard, PendingDeviceRow components, status badges, relative time formatting, React Query data fetching
+  - `apps/dashboard/src/App.tsx` — Added 'devices' to Tab type, imported Devices page, added nav link and ErrorBoundary, updated handleNavigate for device/* sub-routes
+- **Learnings for future iterations:**
+  - The frontend is React + Vite, NOT SvelteKit — PRD references to SvelteKit patterns should be adapted to React equivalents
+  - Pages are components rendered by hash-based tab switching in App.tsx, not file-based routes
+  - The `list_devices` backend endpoint returns `Vec<Device>` without connections — connection/protocol info requires individual `get_device` calls
+  - The api.devices() function was pointing to the old `/api/devices` URL; it needed updating to `/api/devices/registry` since the old route was renamed in DEV-004
+  - `npm install` is required before `npm run build` if node_modules is stale
+  - Pre-existing chunk size warning (ECharts ~1MB) can be ignored
 ---
