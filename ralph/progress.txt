@@ -1,0 +1,28 @@
+# Ralph Progress: rustRoast Device Configuration
+# Branch: ralph/device-configuration
+# Started: 2026-02-28
+
+## Codebase Patterns
+- Migrations use `include_str!("../migrations/xxx.sql")` with split-by-semicolon execution and silent error handling (tables may already exist)
+- Use `IF NOT EXISTS` for all CREATE TABLE/INDEX/TRIGGER statements for idempotency
+- Triggers use `CREATE TRIGGER IF NOT EXISTS` syntax for updated_at auto-update
+- Foreign keys use `ON DELETE CASCADE` for child tables, `ON DELETE SET NULL` for optional references
+- AppState is in main.rs with clone-able fields (Arc<RwLock<...>>, SqlitePool, etc.)
+- RoastSessionService follows the service pattern: struct with SqlitePool, async methods returning Result
+- Route handlers are defined in main.rs (monolithic file) — control, session, profile, telemetry handlers all inline
+- Models (request/response structs) are in models.rs with Serialize/Deserialize derives
+- Tests use in-memory SQLite with the same migration pattern
+
+---
+
+## 2026-02-28 - DEV-001
+- Created device configuration database schema with 4 new tables
+- Files changed:
+  - `crates/server/migrations/003_device_configuration.sql` — New: device_profiles, devices, device_connections, modbus_register_maps tables with indexes, foreign keys, and updated_at triggers
+  - `crates/server/src/main.rs` — Refactored migration loading from single include_str! to array iteration over multiple migration files
+- **Learnings for future iterations:**
+  - This branch (ralph/device-configuration) is based on main, which has older migration patterns (include_str! + split) vs the modernization branch which uses sqlx::migrate!()
+  - The migration array pattern supports adding new migration files without restructuring the init_db function
+  - device_profiles table must be created before devices table since devices has FK to device_profiles
+  - SQLite `JSON` type is used for device_connections.config — stores protocol-specific config as serde_json::Value
+---
