@@ -221,6 +221,8 @@
 					location: location.trim() || undefined,
 				});
 				deviceUuid = device.id;
+				// Activate it (created as 'pending' by default)
+				await updateDevice(deviceUuid, { status: 'active' });
 			}
 
 			// 2. Add the connection (skip if auto-discovered device already has one for this protocol)
