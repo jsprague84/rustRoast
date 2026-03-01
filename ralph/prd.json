@@ -252,7 +252,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "Import the autotune store in TelemetryChart.svelte. When isAutotuning or results are pending, add a markLine to the BT series (or a separate constant-value series) at the targetTemp value. Use markLine: { data: [{ yAxis: targetTemp, lineStyle: { color: '#f97316', type: 'dashed' }, label: { formatter: 'AT Target', color: '#f97316' } }] }. Alternative: add a separate series with a constant value across the full X range. The simpler markLine approach is preferred."
     },
     {

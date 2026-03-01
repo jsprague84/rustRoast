@@ -252,3 +252,21 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - The `fetchLatestAutotune` function already handles loading both status and results on page load — no additional fetch needed for results recovery
   - Place the results section outside the `isAutotuning` conditional but still inside the main controls `div` — results should show alongside the Start button (not during active autotuning)
 ---
+
+## 2026-03-01 - AT-005
+- What was implemented: Autotune target line annotation on telemetry chart
+  - Imported `autotuneState` from autotune store into TelemetryChart.svelte
+  - When `isAutotuning` is true OR `results` are pending (not dismissed), AND `targetTemp` is set, adds a horizontal dashed markLine at the target temperature
+  - Line styled as orange (#f97316) dashed line labeled 'AT Target'
+  - Uses the same `markLines` array as landmark annotations — merged into BT series markLine data
+  - Autotune target temperature included in Y-axis bounds calculation so chart auto-scales to show it
+  - Existing BT, ET, RoR, Heater, Fan, and Profile series continue to render normally
+  - Defined explicit `MarkLineItem` type to support both xAxis (landmarks) and yAxis (autotune) markLines in the same array
+- Files changed:
+  - `apps/dashboard/src/lib/components/TelemetryChart.svelte` — added autotuneState import, MarkLineItem type, autotune target markLine logic, Y-axis bounds inclusion
+- **Learnings for future iterations:**
+  - ECharts markLine with `yAxis: value` creates a horizontal line (vs `xAxis: value` for vertical landmark lines)
+  - When mixing xAxis and yAxis markLines in the same array, define an explicit union type (`MarkLineItem`) with both optional to avoid TypeScript errors
+  - Include markLine target values in allTemps for Y-axis bounds calculation to ensure the line is always visible on the chart
+  - `autotuneState` is reactive in `$derived.by` blocks — reading `isAutotuning`, `results`, and `targetTemp` inside the derivation auto-tracks changes
+---
