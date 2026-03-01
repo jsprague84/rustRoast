@@ -26,6 +26,18 @@ export const api = {
     body: JSON.stringify(req),
   }),
 
+  // Device Connections
+  testConnection: (req: TestConnectionRequest) => j<TestConnectionResponse>(`/api/devices/test-connection`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  }),
+  addConnection: (deviceId: string, req: CreateConnectionRequest) => j<DeviceConnection>(`/api/devices/${encodeURIComponent(deviceId)}/connections`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(req),
+  }),
+
   // Device Profiles
   listDeviceProfiles: () => j<DeviceProfile[]>(`/api/device-profiles`),
   // Telemetry
@@ -301,5 +313,25 @@ export type DeviceProfile = {
   telemetry_interval_ms?: number
   created_at: string
   updated_at: string
+}
+
+// Connection testing types
+export type TestConnectionRequest = {
+  protocol: ConnectionProtocol
+  config: Record<string, unknown>
+  device_id?: string
+}
+
+export type TestConnectionResponse = {
+  success: boolean
+  message: string
+  latency_ms?: number
+}
+
+export type CreateConnectionRequest = {
+  protocol: ConnectionProtocol
+  enabled: boolean
+  priority?: number
+  config: Record<string, unknown>
 }
 
