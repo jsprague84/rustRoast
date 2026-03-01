@@ -91,3 +91,25 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - `profileState.activeProfile` is reactive in `$derived.by` — reading it inside the derivation auto-tracks changes
   - Include profile temps in allTemps for Y-axis bounds so the chart scales to show the full profile curve
 ---
+
+## 2026-03-01 - PF-006
+- What was implemented: Profile following (auto setpoint control)
+  - Created `FollowProfile.svelte` component with follow/stop toggle button
+  - Button only enabled when a profile is loaded AND session is active (status === 'active')
+  - Uses `$effect` with `setInterval(1000)` to run every second while following
+  - Each tick interpolates target temp at (elapsed_ms + lookahead_ms) using `interpolateTarget()`
+  - Sends POST setpoint via `control.setSetpoint()` only when |new_target - lastSentSetpoint| >= 1.0°C (hysteresis)
+  - Automatically calls `control.setMode(deviceId, 'auto')` when following starts
+  - Following auto-stops when session ends, profile is unloaded, or user toggles off
+  - Lookahead loaded from settings API (`profile_lookahead_seconds`, default 20s)
+  - Shows current status: lookahead value, last sent target temperature
+  - Integrated into dashboard sidebar between SessionControls and LandmarkPanel
+- Files changed:
+  - `apps/dashboard/src/lib/components/FollowProfile.svelte` — new component
+  - `apps/dashboard/src/routes/+page.svelte` — imported and placed FollowProfile in sidebar
+- **Learnings for future iterations:**
+  - `$effect` cleanup pattern works for intervals: return `() => clearInterval(id)` from the effect body
+  - Profile store's `lastSentSetpoint` serves as hysteresis state — set it before the async API call to avoid duplicate sends
+  - Compute elapsed time from `activeSession.start_time` via `Date.now() - new Date(start_time).getTime()` — don't rely on a separate timer
+  - `$derived` works well for computed enable/disable conditions that depend on multiple reactive sources
+---

@@ -113,7 +113,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "The follow logic lives in a $effect in a component (e.g., SessionControls or a new FollowProfile.svelte helper component). Use the telemetry store to get current elapsed time from the session start. The control API is at $lib/api/client.ts: control.setSetpoint(deviceId, value). The profile store's startFollowing/stopFollowing manage the isFollowing boolean. The setInterval runs inside a $effect cleanup pattern: $effect(() => { if (!isFollowing) return; const id = setInterval(..., 1000); return () => clearInterval(id); }). Read settings on mount via settings.get() and extract profile_lookahead_seconds."
     },
     {
