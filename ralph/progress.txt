@@ -11,6 +11,8 @@
 - Use `getZr().on('click')` with `!event.target` check for blank area clicks (add points)
 - Use `chart.on('click')` with `componentType === 'series'` for clicking on data points
 - Svelte 5 `$props()` values referenced outside reactive contexts trigger `state_referenced_locally` warning — extract to plain `const` variables to make intent clear
+- WebSocket messages are polymorphic: check for `msg.telemetry` vs `msg.autotune` key to determine type — parse as generic JSON first
+- Autotune API endpoints: start/stop/apply require auth (POST), status/results latest are public (GET); API client namespace is `autotune` in client.ts
 
 # Ralph Progress Log
 Started: Sun Mar  1 05:07:32 PM CST 2026
@@ -166,4 +168,29 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - Profile list fetch uses `$effect(() => { fetchProfiles(); })` pattern — same as checkActiveSession
   - `loadProfile(...).catch(() => {})` is the fire-and-forget pattern for non-critical async loads
   - Profile dropdown uses `bind:value={selectedProfileId}` with empty string as "no selection" (maps to `undefined` via `|| undefined`)
+---
+
+## 2026-03-01 - AT-001
+- What was implemented: Autotune store for state management
+  - Created `$lib/stores/autotune.svelte.ts` using Svelte 5 `$state` runes
+  - Reactive state: `autotuneState` with `status` (phase, stepCount, progress), `results` (Kp, Ki, Kd), `isAutotuning`, `targetTemp`
+  - WebSocket event subscription via `autotuneEvent` readonly store from telemetry.ts
+  - Parses status events (phase, step_count → progress estimate at ~15 cycles) and results events (Kp, Ki, Kd)
+  - Actions: `startAutotune()`, `stopAutotune()`, `applyResults()`, `dismissResults()`
+  - `fetchLatestAutotune(deviceId)` for page-refresh recovery via GET status/results/latest endpoints
+  - `initAutotuneSubscription()` / `destroyAutotuneSubscription()` for lifecycle management
+  - Added `autotune` API namespace to client.ts: start, stop, apply, getLatestStatus, getLatestResults
+  - Added `AutotuneWsMessage` type to telemetry.ts
+  - Modified telemetry store to forward autotune WS events via `_autotuneEvent` writable + `autotuneEvent` readonly export
+- Files changed:
+  - `apps/dashboard/src/lib/stores/autotune.svelte.ts` — new file
+  - `apps/dashboard/src/lib/api/client.ts` — autotune API namespace + interfaces
+  - `apps/dashboard/src/lib/stores/telemetry.ts` — autotune event forwarding
+  - `apps/dashboard/src/lib/types/telemetry.ts` — AutotuneWsMessage interface
+- **Learnings for future iterations:**
+  - The WebSocket sends both telemetry (`{ device_id, telemetry }`) and autotune (`{ device_id, autotune: { type, data } }`) messages — parse `msg` as generic JSON first, then branch on presence of `telemetry` vs `autotune` key
+  - Autotune events flow: ESP32 → MQTT `roaster/{id}/autotune/{status|results}` → server caches + forwards to WS → frontend store
+  - Svelte writable stores can bridge between legacy Svelte stores (telemetry.ts) and Svelte 5 rune stores (.svelte.ts) — subscribe in the rune store to the writable's `subscribe()` method
+  - Autotune endpoints use `true` for requiresAuth (start/stop/apply are protected) while status/results queries are public
+  - Progress estimation: divide step_count by 15 (typical relay cycle count), cap at 95% until ANALYZING phase
 ---

@@ -181,7 +181,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "The WebSocket at /ws/telemetry forwards autotune events. In main.rs telemetry_ws_loop, autotune messages are sent as JSON: { autotune: { type: 'status'|'results', data: ... } }. The store should subscribe to the telemetry WebSocket messages and filter for autotune events. Use the control API for start/stop/apply: the autotune endpoints are on the existing API client pattern but not yet in client.ts — add autotune.start(deviceId, { target_temp }), autotune.stop(deviceId), autotune.apply(deviceId). For the status fetch on init, call fetch directly or add to the API client."
     },
     {
