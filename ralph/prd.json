@@ -130,7 +130,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Import the profile store into CurrentReadings.svelte. Use $derived to compute the delta: get current BT from telemetry, get current elapsed time, call interpolateTarget(elapsedMs, 0) (no lookahead for display — show actual delta, not lookahead delta). The CurrentReadings component already has a readings grid pattern — add a new entry conditionally rendered with {#if activeProfile && elapsedMs > 0}. Use $derived for the color class based on Math.abs(delta)."
     },
     {

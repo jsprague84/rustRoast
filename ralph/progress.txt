@@ -113,3 +113,22 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - Compute elapsed time from `activeSession.start_time` via `Date.now() - new Date(start_time).getTime()` — don't rely on a separate timer
   - `$derived` works well for computed enable/disable conditions that depend on multiple reactive sources
 ---
+
+## 2026-03-01 - PF-007
+- What was implemented: Profile temperature delta in current readings
+  - Added `activeSession` prop to `CurrentReadings.svelte` (passed from dashboard page)
+  - Imported profile store and `interpolateTarget` to compute target temp at current elapsed time
+  - Delta = actual BT - profile target (positive = ahead/hotter, negative = behind/cooler)
+  - Display format: '+2.3°C' or '-1.5°C' with sign always shown via `fmtDelta()` helper
+  - Color coding via `$derived`: text-green-400 (|delta| ≤ 2°C), text-amber-400 (2-5°C), text-red-400 (>5°C)
+  - Delta card conditionally rendered: only shown when profile loaded AND session active AND delta computed
+  - Updates in real-time on each telemetry tick (Date.now() recomputed whenever `$telemetry` changes)
+- Files changed:
+  - `apps/dashboard/src/lib/components/CurrentReadings.svelte` — added imports, props, delta logic, conditional card
+  - `apps/dashboard/src/routes/+page.svelte` — pass `activeSession` prop to CurrentReadings
+- **Learnings for future iterations:**
+  - `$derived.by` with `Date.now()` inside works for elapsed-time calculations because `$telemetry` changes trigger recomputation (no need for a separate timer)
+  - `interpolateTarget(points, elapsedMs, 0)` with lookahead=0 gives the actual profile target at the current time (vs lookahead for following)
+  - Adding a prop to an existing component requires updating all call sites — check the dashboard page and any other consumers
+  - Conditional grid items work cleanly with `{#if}` inside the grid — Tailwind grid auto-fills the extra cell
+---
