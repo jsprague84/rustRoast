@@ -438,3 +438,15 @@
   - Modbus float32 encoding uses IEEE 754 big-endian (ABCD) across 2 consecutive 16-bit registers
   - The Artisan compatible register map uses int16 with scale_factor 0.1 (x10) convention for temperatures
 ---
+
+## 2026-03-01 - SVELTE-001
+- Added Devices nav item to sidebar layout in +layout.svelte
+- Imported Cpu icon from lucide-svelte, added nav entry between Profiles and Settings
+- Links to /devices path with same amber active state pattern as other nav items
+- Files changed:
+  - `apps/dashboard/src/routes/+layout.svelte` — Added Cpu import, added Devices nav item to navItems array
+- **Learnings for future iterations:**
+  - Nav items are a simple array of {href, label, icon} objects — adding a new page to sidebar is just one array entry + icon import
+  - Active state detection uses page.url.pathname.startsWith(href) for non-root paths, exact match for root
+  - Icon components are passed by reference in the navItems array and rendered as `<item.icon class="h-4 w-4" />`
+---

@@ -17,7 +17,7 @@
         "npm run build succeeds"
       ],
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "notes": "The layout is at src/routes/+layout.svelte. It uses Svelte 5 runes ($props, $state). Icons are from lucide-svelte. Active detection: isActive(href) checks page.url.pathname.startsWith(href). Follow the exact same pattern as existing nav items."
     },
     {
