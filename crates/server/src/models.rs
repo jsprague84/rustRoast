@@ -714,5 +714,10 @@ pub struct ModbusTcpConnectionConfig {
     pub host: String,
     pub port: u16,
     pub unit_id: u8,
+    #[serde(default = "default_poll_interval")]
     pub poll_interval_ms: u64,
+}
+
+fn default_poll_interval() -> u64 {
+    1000
 }
