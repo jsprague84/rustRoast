@@ -76,10 +76,10 @@
 			<select
 				value={selectedId}
 				onchange={handleChange}
-				class="appearance-none rounded-md border border-border bg-input py-1.5 pl-6 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
+				class="appearance-none rounded-md border border-border bg-card py-1.5 pl-6 pr-8 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500"
 			>
 				{#each devices as device}
-					<option value={device.device_id}>{device.name}</option>
+					<option class="bg-card text-foreground" value={device.device_id}>{device.name}</option>
 				{/each}
 			</select>
 			<!-- Status dot positioned inside the select -->

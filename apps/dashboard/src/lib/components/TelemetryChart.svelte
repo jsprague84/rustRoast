@@ -62,6 +62,7 @@
 		}));
 
 		const option: ECOption = {
+			title: { show: false },
 			animation: false,
 			grid: { left: 50, right: 60, top: 30, bottom: 40, backgroundColor: 'transparent' },
 			tooltip: {

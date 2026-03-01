@@ -54,6 +54,7 @@ let reconnectAttempts = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let visibilityHandler: (() => void) | null = null;
 let pausedByVisibility = false;
+let selectedDevice: string | null = null;
 
 function connect() {
 	if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return;
@@ -70,6 +71,9 @@ function connect() {
 		try {
 			const msg: TelemetryMessage = JSON.parse(event.data);
 			if (msg.telemetry) {
+				// Filter to selected device (if one is selected)
+				if (selectedDevice && msg.device_id !== selectedDevice) return;
+
 				_telemetry.set(msg.telemetry);
 				_deviceId.set(msg.device_id);
 				_history.update((h) => {
@@ -108,6 +112,15 @@ function scheduleReconnect() {
 
 /** Clear telemetry history (e.g. when starting a new roast). */
 export function clearHistory() {
+	_history.set([]);
+}
+
+/** Set the device to filter telemetry for. Clears history on device change. */
+export function setSelectedDevice(deviceId: string | null) {
+	if (deviceId === selectedDevice) return;
+	selectedDevice = deviceId;
+	_telemetry.set(null);
+	_deviceId.set(null);
 	_history.set([]);
 }
 

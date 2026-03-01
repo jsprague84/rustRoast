@@ -15,7 +15,7 @@ use tracing::info;
 use tracing_subscriber::EnvFilter;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use prometheus::{Encoder, IntCounter, IntGauge, IntGaugeVec, TextEncoder};
 // (Static docs in /docs for now; utoipa can be reintroduced later)
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
@@ -25,6 +25,7 @@ use axum::http::header::CONTENT_TYPE;
 use tower_http::services::{ServeDir, ServeFile};
 use std::path::PathBuf;
 
+mod device_poller;
 mod models;
 mod modbus;
 mod routes;
@@ -253,13 +254,18 @@ async fn main() {
     // Background consumer for MQTT events -> caches + metrics + persistence
     tokio::spawn(mqtt_consumer_loop(
         mqtt.clone(),
-        telemetry_service,
+        telemetry_service.clone(),
         device_registry,
         metrics.clone(),
         db.clone(),
         autotune_status_cache,
         autotune_results_cache,
         device_service.clone(),
+    ));
+    // Background pollers for Modbus TCP and WebSocket device connections
+    tokio::spawn(device_poller::start_device_pollers(
+        device_service.clone(),
+        telemetry_service,
     ));
     // Retention cleanup task
     tokio::spawn(retention_cleanup_loop(db.clone()));
@@ -551,51 +557,62 @@ async fn ws_debug(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl I
 async fn telemetry_ws_loop(state: AppState, mut socket: WebSocket) {
     // Count WS client
     state.metrics.ws_clients.inc();
-    println!("DEBUG: WebSocket telemetry client connected, total clients: {}", state.metrics.ws_clients.get());
-    
-    let mut rx = state.mqtt.events();
-    println!("DEBUG: WebSocket client subscribed to MQTT events");
-    
-    while let Ok(evt) = rx.recv().await {
-        println!("DEBUG: Received MQTT event in WebSocket loop");
-        if let rustroast_mqtt::MqttEvent::Publish { topic, payload } = evt {
-            println!("DEBUG: MQTT Publish event - topic: {}", topic);
-            if let Some((device_id, kind)) = parse_roaster_topic(&topic) {
-                println!("DEBUG: Parsed topic - device_id: {}, kind: {}", device_id, kind);
-                if kind == "telemetry" {
-                    // Try to forward as a single JSON object containing device_id and telemetry
-                    let msg_text = match serde_json::from_slice::<serde_json::Value>(&payload) {
-                        Ok(val) => serde_json::json!({"device_id": device_id, "telemetry": val}).to_string(),
-                        Err(_) => serde_json::json!({"device_id": device_id, "telemetry_raw": String::from_utf8_lossy(&payload)}).to_string(),
-                    };
-                    println!("DEBUG: Sending telemetry message to WebSocket: {}", &msg_text[..100]);
-                    if socket.send(Message::Text(msg_text)).await.is_err() {
-                        println!("DEBUG: WebSocket send failed, client disconnected");
-                        break;
-                    } else {
-                        println!("DEBUG: Successfully sent telemetry to WebSocket client");
-                    }
-                } else if kind == "autotune" {
-                    // roaster/{device_id}/autotune/{status|results}
-                    let mut parts = topic.split('/');
-                    let _ = parts.next(); // roaster
-                    let _ = parts.next(); // device_id
-                    let _ = parts.next(); // autotune
-                    if let Some(sub) = parts.next() {
-                        let msg_text = match serde_json::from_slice::<serde_json::Value>(&payload) {
-                            Ok(val) => serde_json::json!({
-                                "device_id": device_id,
-                                "autotune": {"type": sub, "data": val}
-                            }).to_string(),
-                            Err(_) => serde_json::json!({
-                                "device_id": device_id,
-                                "autotune_raw": {"type": sub, "data": String::from_utf8_lossy(&payload)}
-                            }).to_string(),
-                        };
+    tracing::info!("WebSocket telemetry client connected, total: {}", state.metrics.ws_clients.get());
+
+    // Subscribe to unified telemetry broadcast (covers MQTT, device WS, Modbus)
+    let mut telemetry_rx = state.telemetry_service.subscribe();
+    // Also subscribe to MQTT for autotune events
+    let mut mqtt_rx = state.mqtt.events();
+
+    loop {
+        tokio::select! {
+            evt = telemetry_rx.recv() => {
+                match evt {
+                    Ok(te) => {
+                        let msg_text = serde_json::json!({
+                            "device_id": te.device_id,
+                            "telemetry": te.payload,
+                        }).to_string();
                         if socket.send(Message::Text(msg_text)).await.is_err() {
                             break;
                         }
                     }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(skipped = n, "Dashboard WS client lagged, dropped messages");
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            mqtt_evt = mqtt_rx.recv() => {
+                match mqtt_evt {
+                    Ok(rustroast_mqtt::MqttEvent::Publish { topic, payload }) => {
+                        if let Some((device_id, kind)) = parse_roaster_topic(&topic) {
+                            if kind == "autotune" {
+                                let mut parts = topic.split('/');
+                                let _ = parts.next(); // roaster
+                                let _ = parts.next(); // device_id
+                                let _ = parts.next(); // autotune
+                                if let Some(sub) = parts.next() {
+                                    let msg_text = match serde_json::from_slice::<serde_json::Value>(&payload) {
+                                        Ok(val) => serde_json::json!({
+                                            "device_id": device_id,
+                                            "autotune": {"type": sub, "data": val}
+                                        }).to_string(),
+                                        Err(_) => serde_json::json!({
+                                            "device_id": device_id,
+                                            "autotune_raw": {"type": sub, "data": String::from_utf8_lossy(&payload)}
+                                        }).to_string(),
+                                    };
+                                    if socket.send(Message::Text(msg_text)).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                            // Telemetry is now handled via unified broadcast above
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                    _ => {}
                 }
             }
         }

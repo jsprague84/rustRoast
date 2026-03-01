@@ -5,10 +5,17 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use prometheus::IntGaugeVec;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::models::DeviceStatus;
 use crate::services::DeviceService;
+
+/// Event broadcast when any device sends telemetry (from any protocol).
+#[derive(Debug, Clone)]
+pub struct TelemetryEvent {
+    pub device_id: String,
+    pub payload: serde_json::Value,
+}
 
 /// Typed telemetry struct matching the ESP32 JSON output.
 /// Fields use camelCase serde rename to match the ESP32 firmware.
@@ -81,6 +88,8 @@ pub struct TelemetryService {
     device_service: DeviceService,
     telemetry_last_seen: IntGaugeVec,
     last_seen_debounce: Arc<std::sync::Mutex<HashMap<String, Instant>>>,
+    /// Broadcast channel for all processed telemetry events (any protocol).
+    telemetry_tx: broadcast::Sender<TelemetryEvent>,
 }
 
 impl TelemetryService {
@@ -90,13 +99,20 @@ impl TelemetryService {
         device_service: DeviceService,
         telemetry_last_seen: IntGaugeVec,
     ) -> Self {
+        let (telemetry_tx, _) = broadcast::channel(256);
         Self {
             telemetry_cache,
             db,
             device_service,
             telemetry_last_seen,
             last_seen_debounce: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            telemetry_tx,
         }
+    }
+
+    /// Subscribe to all processed telemetry events.
+    pub fn subscribe(&self) -> broadcast::Receiver<TelemetryEvent> {
+        self.telemetry_tx.subscribe()
     }
 
     /// Process incoming telemetry from any protocol (MQTT, WebSocket, Modbus).
@@ -115,6 +131,12 @@ impl TelemetryService {
 
         // Always update telemetry cache
         self.telemetry_cache.write().await.insert(device_id.to_string(), (payload.clone(), now));
+
+        // Broadcast to dashboard WebSocket clients
+        let _ = self.telemetry_tx.send(TelemetryEvent {
+            device_id: device_id.to_string(),
+            payload: payload.clone(),
+        });
 
         let payload_str = serde_json::to_string(payload).unwrap_or_default();
 
