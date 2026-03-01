@@ -61,7 +61,7 @@
 <div class="flex h-full flex-col gap-4 lg:flex-row lg:items-stretch">
 	<!-- Main content: readings + chart -->
 	<div class="flex min-w-0 flex-1 flex-col gap-4">
-		<CurrentReadings />
+		<CurrentReadings {activeSession} />
 		<div class="flex-1" style="min-height: 400px;">
 			<TelemetryChart {landmarks} />
 		</div>
