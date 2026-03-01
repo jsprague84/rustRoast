@@ -194,3 +194,24 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - Autotune endpoints use `true` for requiresAuth (start/stop/apply are protected) while status/results queries are public
   - Progress estimation: divide step_count by 15 (typical relay cycle count), cap at 95% until ANALYZING phase
 ---
+
+## 2026-03-01 - AT-002
+- What was implemented: Autotune control panel on settings page
+  - Created `AutotunePanel.svelte` component with target temperature input (150-250°C, default 200, step 5)
+  - Start Autotune button (amber, Play icon) calls `startAutotune(deviceId, targetTemp)` from the autotune store
+  - Stop Autotune button (red, Square icon) shown while autotuning, calls `stopAutotune(deviceId)`
+  - Panel disabled with message when no device connected
+  - Warning banner shown when a roast session is active (checks sessions API)
+  - Start button disabled via `$derived` combining: isAutotuning, hasActiveSession, deviceId presence, loading state
+  - Initializes autotune WS subscription and fetches latest status on mount (page refresh recovery)
+  - Integrated into settings page as a new section below API Key settings
+- Files changed:
+  - `apps/dashboard/src/lib/components/AutotunePanel.svelte` — new component
+  - `apps/dashboard/src/routes/settings/+page.svelte` — import AutotunePanel, add to layout
+- **Learnings for future iterations:**
+  - The settings page had `mt-6` margin on the first card section — switched to `space-y-6` on the container for consistent spacing between sections
+  - `deviceId` from telemetry store works on the settings page (WS connects app-wide) — no need to add a DeviceSelector
+  - Active session check via `sessions.list()` is the simplest approach for pages that don't have session state in scope
+  - `$effect` with cleanup pattern works for both `initAutotuneSubscription` and `destroyAutotuneSubscription` lifecycle
+  - Label `for` attribute + input `id` ensures accessibility (no a11y warnings for this component)
+---
