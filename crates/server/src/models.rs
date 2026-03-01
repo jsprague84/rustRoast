@@ -363,7 +363,7 @@ impl std::str::FromStr for DeviceStatus {
 #[serde(rename_all = "snake_case")]
 pub enum Protocol {
     Mqtt,
-    #[serde(alias = "websocket")]
+    #[serde(rename = "websocket")]
     WebSocket,
     ModbusTcp,
 }
