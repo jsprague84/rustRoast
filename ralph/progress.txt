@@ -22,6 +22,10 @@
 - Standalone server components (Modbus TCP) go in `src/modbus.rs` (not services.rs which is for DB services)
 - tokio-modbus 0.16 TCP server needs `features = ["tcp-server"]`; Service trait `call(&self)` requires Pin<Box<dyn Future>> for async ops
 - When starting background tasks that clone Arc'd state, order matters: clone before the consumer loop that takes ownership
+- mqtt_consumer_loop uses `#[allow(clippy::too_many_arguments)]` since it legitimately needs many Arc'd caches plus services
+- Auto-discovery creates device + MQTT connection in two calls; if connection creation fails, device still exists (partial success is acceptable)
+- Debounce HashMap<String, Instant> tracks per-device last-seen update times; no Arc needed since it's local to the consumer loop
+- Axum 0.7 (matchit) correctly handles literal routes like `/api/devices/discovered` alongside parameterized `/api/devices/:id` — literal takes priority
 
 ---
 
@@ -124,4 +128,22 @@
   - When starting Modbus server before mqtt_consumer_loop, clone telemetry_cache first since mqtt_consumer_loop takes ownership
   - Float32 values are encoded IEEE 754 big-endian across 2 consecutive 16-bit registers: high word at lower address, low word at higher address
   - Holding registers 0x0006-0x000B are gap/reserved registers (no MQTT mapping) — reads return 0, writes are no-ops
+---
+
+## 2026-02-28 - DEV-007
+- Updated MQTT consumer to integrate with persistent device configuration
+- Auto-discovery: unknown device_ids arriving via MQTT auto-create a device entry (status 'pending') with default MQTT connection config
+- Last-seen debouncing: update_last_seen called at most once per 10 seconds per device using HashMap<String, Instant>
+- Disabled devices: telemetry is cached but session_telemetry recording is skipped
+- Added GET /api/devices/discovered endpoint returning devices with status 'pending'
+- Files changed:
+  - `crates/server/src/main.rs` — Added DeviceService to mqtt_consumer_loop, auto-discovery logic, last-seen debouncing, disabled device check, device_service.clone() for background task
+  - `crates/server/src/routes/devices.rs` — Added list_discovered_devices handler and GET /api/devices/discovered route
+  - `crates/server/src/services.rs` — Removed dead_code annotations from get_device_by_device_id and update_last_seen (now consumed by MQTT consumer)
+- **Learnings for future iterations:**
+  - Adding a parameter to mqtt_consumer_loop (now 8 params) triggers clippy::too_many_arguments — use `#[allow]` since it's a background task with legitimately many dependencies
+  - DeviceService must be `.clone()`d before being moved into AppState if it's also needed by the background consumer
+  - Auto-discovery uses get_device_by_device_id (looks up by device_id string, not internal UUID) — important distinction from get_device (which uses internal id)
+  - The device status check happens once per telemetry message; for high-frequency telemetry this adds a DB lookup per message. A future optimization could cache device statuses in memory.
+  - Axum 0.7 route ordering: literal path segments like `/api/devices/discovered` take priority over parameterized `/api/devices/:id` regardless of registration order
 ---

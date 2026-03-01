@@ -150,7 +150,7 @@
         "cargo build succeeds, cargo clippy passes, cargo test passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "Use a simple HashMap<String, Instant> for last-seen debouncing. The auto-discovery feature means users see new devices appear in the wizard as soon as they power on and start publishing MQTT telemetry."
     },
     {
