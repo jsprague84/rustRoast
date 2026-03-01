@@ -132,3 +132,23 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - Adding a prop to an existing component requires updating all call sites — check the dashboard page and any other consumers
   - Conditional grid items work cleanly with `{#if}` inside the grid — Tailwind grid auto-fills the extra cell
 ---
+
+## 2026-03-01 - PF-008
+- What was implemented: Profile selector in session creation flow
+  - Added `profile_id` field to frontend `RoastSession` and `CreateSessionRequest` interfaces (backend already had it)
+  - Profile dropdown in SessionControls.svelte: fetches profile list on mount, shows in both quick-start and detailed form views
+  - Dropdown shows profile name with charge temp and duration metadata
+  - Selected `profile_id` included in POST /api/sessions request body
+  - Auto-loads profile into profile store when session starts (both quick-start and form paths)
+  - Auto-loads profile on page refresh if active session has a `profile_id`
+  - User can start session without selecting a profile (optional, defaults to "No profile")
+  - Select styling matches DeviceSelector pattern (bg-card, border-border, text-foreground, appearance-none)
+- Files changed:
+  - `apps/dashboard/src/lib/api/client.ts` — added `profile_id` to `RoastSession` and `CreateSessionRequest` interfaces
+  - `apps/dashboard/src/lib/components/SessionControls.svelte` — profile list fetch, dropdown UI, auto-load on session start
+- **Learnings for future iterations:**
+  - Backend `CreateSessionRequest` and `RoastSession` already had `profile_id` — always check backend models before adding new fields
+  - Profile list fetch uses `$effect(() => { fetchProfiles(); })` pattern — same as checkActiveSession
+  - `loadProfile(...).catch(() => {})` is the fire-and-forget pattern for non-critical async loads
+  - Profile dropdown uses `bind:value={selectedProfileId}` with empty string as "no selection" (maps to `undefined` via `|| undefined`)
+---

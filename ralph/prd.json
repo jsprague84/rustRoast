@@ -146,7 +146,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "The CreateSessionRequest in the API client accepts an optional profile_id field — check models.rs for the backend model. The sessions.create() function in client.ts sends the request. Profile list can be fetched via profiles.list(). When a session starts and has a profile_id, call profileStore.loadProfile(profileId). Check how session creation currently works — it may be in SessionControls.svelte or the main dashboard page. The profile dropdown should use the same select styling as DeviceSelector (bg-card, border-border, text-foreground)."
     },
     {
