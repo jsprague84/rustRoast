@@ -9,8 +9,17 @@ async function j<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  // Devices
-  devices: () => j<{ devices: DeviceInfo[] }>(`/api/devices`),
+  // Devices (in-memory MQTT registry)
+  devices: () => j<{ devices: DeviceInfo[] }>(`/api/devices/registry`),
+
+  // Device Configuration (persistent)
+  listConfiguredDevices: (status?: ConfiguredDeviceStatus) => {
+    const params = status ? `?status=${status}` : ''
+    return j<ConfiguredDevice[]>(`/api/devices${params}`)
+  },
+  getConfiguredDevice: (id: string) => j<ConfiguredDeviceWithConnections>(`/api/devices/${encodeURIComponent(id)}`),
+  getDiscoveredDevices: () => j<ConfiguredDevice[]>(`/api/devices/discovered`),
+  deleteConfiguredDevice: (id: string) => j<void>(`/api/devices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   // Telemetry
   latestTelemetry: (deviceId: string) => j<LatestTelemetryResponse>(`/api/roaster/${encodeURIComponent(deviceId)}/telemetry/latest`),
   telemetryHistory: (deviceId: string, since_secs = 3600, limit = 300) =>
@@ -227,5 +236,37 @@ export type UpdateRoastEventRequest = {
   elapsed_seconds?: number
   temperature?: number
   notes?: string
+}
+
+// Device Configuration Types (persistent devices table)
+export type ConfiguredDeviceStatus = 'pending' | 'active' | 'disabled' | 'error'
+export type ConnectionProtocol = 'mqtt' | 'websocket' | 'modbus_tcp'
+
+export type ConfiguredDevice = {
+  id: string
+  name: string
+  device_id: string
+  profile_id?: string
+  status: ConfiguredDeviceStatus
+  description?: string
+  location?: string
+  created_at: string
+  updated_at: string
+  last_seen_at?: string
+}
+
+export type DeviceConnection = {
+  id: string
+  device_id: string
+  protocol: ConnectionProtocol
+  enabled: boolean
+  priority: number
+  config: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type ConfiguredDeviceWithConnections = ConfiguredDevice & {
+  connections: DeviceConnection[]
 }
 

@@ -6,11 +6,12 @@ import { UnifiedDashboard } from './pages/UnifiedDashboard'
 import { Settings } from './pages/Settings'
 import { AutoTune } from './pages/AutoTune'
 import { TestRoastControl } from './pages/TestRoastControl'
+import { Devices } from './pages/Devices'
 import { ErrorBoundary } from './components/ui/ErrorBoundary'
 import { NotificationProvider } from './components/system/NotificationProvider'
 import { UpdatePrompt, OfflineIndicator } from './components/system/UpdatePrompt'
 
-type Tab = 'roast' | 'sessions' | 'profiles' | 'autotune' | 'settings' | 'test'
+type Tab = 'roast' | 'sessions' | 'devices' | 'profiles' | 'autotune' | 'settings' | 'test'
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('roast')
@@ -33,6 +34,11 @@ export default function App() {
     if (path.startsWith('session/')) {
       setTab('sessions')
       setSessionId(sessionIdParam || path.split('/')[1])
+    } else if (path.startsWith('device/') || path.startsWith('devices/')) {
+      // Device sub-routes (detail, new wizard) — stay on devices tab
+      setTab('devices')
+      setSessionId(null)
+      window.location.hash = 'devices'
     } else {
       setTab(path as Tab)
       setSessionId(null)
@@ -78,6 +84,16 @@ export default function App() {
                 transition: 'all 0.2s ease'
               }}>
                 Sessions
+              </a>
+              <a href="#devices" style={{
+                padding: '0.5rem 1rem',
+                borderRadius: '0.5rem',
+                textDecoration: 'none',
+                color: tab === 'devices' ? 'var(--color-primary-700)' : 'var(--color-gray-600)',
+                backgroundColor: tab === 'devices' ? 'var(--color-primary-100)' : 'transparent',
+                transition: 'all 0.2s ease'
+              }}>
+                Devices
               </a>
               <a href="#profiles" style={{
                 padding: '0.5rem 1rem',
@@ -137,6 +153,9 @@ export default function App() {
           <ErrorBoundary>
             {tab === 'sessions' && !sessionId && <Sessions deviceId={deviceId} onNavigate={handleNavigate} />}
             {tab === 'sessions' && sessionId && <SessionDetail sessionId={sessionId} onNavigate={handleNavigate} />}
+          </ErrorBoundary>
+          <ErrorBoundary>
+            {tab === 'devices' && <Devices onNavigate={handleNavigate} />}
           </ErrorBoundary>
           <ErrorBoundary>
             {tab === 'profiles' && <Profiles />}
