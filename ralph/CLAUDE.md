@@ -70,6 +70,27 @@ Before committing, check if any edited files have learnings worth preserving in 
 
 Only update CLAUDE.md if you have **genuinely reusable knowledge** that would help future work in that directory.
 
+## Research Before Implementing
+
+Before writing code for each story, use the Context7 MCP tools to look up current best practices for the libraries you're about to use. This ensures you write modern, idiomatic code instead of relying on stale patterns.
+
+**When to research:**
+- Before creating a new Svelte component: query Svelte 5 runes patterns (`$state`, `$derived`, `$effect`, `$props`)
+- Before writing ECharts code: query ECharts configuration for the specific chart feature (series, markLine, events, drag)
+- Before adding a new Axum route or service: query Axum patterns for the specific feature (extractors, middleware, error handling)
+- Before writing SQLx queries: query SQLx patterns for the operation (transactions, migrations, query_as)
+- Before writing vitest tests: query vitest + SvelteKit testing patterns
+
+**How to research:**
+1. Use `resolve-library-id` to find the Context7 library ID (e.g., "svelte", "echarts", "axum")
+2. Use `query-docs` with a specific question about what you need to implement
+3. Apply the patterns you find to your implementation
+
+**Do NOT:**
+- Skip research and guess at API usage — outdated patterns cause bugs
+- Research more than 3 times per story — get what you need and move on
+- Research trivial things you already know (basic HTML, simple Tailwind classes)
+
 ## Quality Requirements
 
 - ALL commits must pass your project's quality checks (typecheck, lint, test)
