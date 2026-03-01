@@ -117,6 +117,7 @@ export interface RoastSession {
 	id: string;
 	name: string;
 	device_id: string;
+	profile_id: string | null;
 	status: string;
 	start_time: string | null;
 	end_time: string | null;
@@ -132,6 +133,7 @@ export interface RoastSession {
 export interface CreateSessionRequest {
 	name: string;
 	device_id: string;
+	profile_id?: string;
 	bean_origin?: string;
 	bean_variety?: string;
 	green_weight?: number;
