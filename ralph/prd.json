@@ -277,7 +277,7 @@
         "npm run check passes, npm run build succeeds"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "Follow the ThingsBoard pattern of tabbed interface for progressive disclosure. The Overview tab is the default landing. Each tab manages its own save state independently."
     },
     {

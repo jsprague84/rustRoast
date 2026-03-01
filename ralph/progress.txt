@@ -267,3 +267,25 @@
   - CreateRegisterMapEntry fields must match the backend Rust struct exactly: register_type, address, name, data_type are required; byte_order, scale_factor, offset, unit, description, writable are optional
   - `npm run build` (Vite) remains the reliable quality check; ECharts chunk size warning is expected and pre-existing
 ---
+
+## 2026-03-01 - DEV-013
+- Created device detail and edit page with tabbed interface (Overview, Connections, Configuration, Register Map)
+- Overview tab: editable name/description/location, device profile selector, status badge, last seen, enable/disable/delete quick actions, delete confirmation dialog
+- Connections tab: lists all connections with protocol icon/label/status, inline editing of connection config, test connection button per connection, remove connection with confirmation, add new connection form with protocol-specific fields
+- Configuration tab: collapsible sections for Control Defaults (mode/setpoint/fan PWM), Safety Limits (max temp/min fan PWM), PID Parameters (Kp/Ki/Kd), each with individual Save buttons, "Apply to Device" button sends PID values to live device via control API
+- Register Map tab: conditional on Modbus connection existing, full table editor with load default map, add/remove rows, save map to API, fetches existing map from GET /api/devices/:id/register-map
+- Added missing API functions to client.ts: updateDevice, updateConnection, removeConnection, getRegisterMap
+- Added types: UpdateDeviceRequest, UpdateConnectionRequest, ModbusRegisterMapEntry
+- Wired DeviceDetail into App.tsx routing: renders when deviceView is set but doesn't start with 'devices/new'
+- Files changed:
+  - `apps/dashboard/src/pages/DeviceDetail.tsx` — New: full device detail/edit page with OverviewTab, ConnectionsTab (ConnectionRow, AddConnectionForm), ConfigurationTab, RegisterMapTab, reusable SaveButton and CollapsibleSection components
+  - `apps/dashboard/src/api/client.ts` — Added updateDevice, updateConnection, removeConnection, getRegisterMap API functions; added UpdateDeviceRequest, UpdateConnectionRequest, ModbusRegisterMapEntry types
+  - `apps/dashboard/src/App.tsx` — Imported DeviceDetail, added rendering condition for device detail view when deviceView is a device ID
+- **Learnings for future iterations:**
+  - The deviceView state in App.tsx serves as a sub-router: null = list, 'devices/new...' = wizard, anything else = device detail ID
+  - Devices.tsx navigation uses `device/${device.id}` (internal UUID) which gets parsed by handleNavigate into deviceView; this is the internal ID, not device_id
+  - SaveButton component with idle/saving/saved/error states and auto-reset timers is a useful pattern for section-level saves
+  - ConnectionRow uses local state for config editing — lifting to parent would be needed if cross-connection validation were required
+  - RegisterMapTab initializes local state from API data once (initialized flag pattern) to avoid overwriting user edits on refetch
+  - The `import type` syntax is needed for importing types from DeviceWizard.tsx (ModbusRegisterEntry) to avoid circular deps
+---
