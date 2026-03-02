@@ -1148,7 +1148,7 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     let path = std::env::var("RUSTROAST_DB_PATH").unwrap_or_else(|_| "./data/rustroast.db".to_string());
     // Ensure parent directory exists
     if let Some(parent) = std::path::Path::new(&path).parent() { let _ = std::fs::create_dir_all(parent); }
-    let url = format!("sqlite://{}", path);
+    let url = format!("sqlite://{}?mode=rwc", path);
     let pool = match SqlitePoolOptions::new().max_connections(5).connect(&url).await {
         Ok(p) => p,
         Err(e) => {
