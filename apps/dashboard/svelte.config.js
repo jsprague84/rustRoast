@@ -9,7 +9,10 @@ const config = {
 			fallback: 'index.html',  // SPA mode — enables client-side routing
 			precompress: false,
 			strict: true
-		})
+		}),
+		paths: {
+			base: process.argv.includes('dev') ? '' : '/app'
+		}
 	}
 };
 
