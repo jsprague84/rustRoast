@@ -169,6 +169,9 @@ async fn main() {
         .fallback(ServeFile::new(format!("{}/index.html", app_dir)));
 
     let app = Router::new()
+        // Undo cached 301 from old /app/ mount point
+        .route("/app", get(|| async { axum::response::Redirect::temporary("/") }))
+        .route("/app/*rest", get(|| async { axum::response::Redirect::temporary("/") }))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/version", get(version))
