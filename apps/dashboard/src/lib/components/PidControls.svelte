@@ -7,17 +7,18 @@
 	let kp = $state(15);
 	let ki = $state(1);
 	let kd = $state(25);
-	let synced = false;
+	let editing = $state(false);
+	let suppressUntil = 0;
 
-	// Sync from telemetry only on first mount
+	// Sync from telemetry whenever the user isn't actively editing
+	// and we're past the post-apply cooldown.
 	$effect(() => {
 		const t = $telemetry;
-		if (t && !synced) {
+		if (t && !editing && Date.now() > suppressUntil) {
 			mode = t.controlMode === 1 ? 'auto' : 'manual';
-			if (t.Kp != null) kp = t.Kp;
-			if (t.Ki != null) ki = t.Ki;
-			if (t.Kd != null) kd = t.Kd;
-			synced = true;
+			if (t.Kp != null) kp = Math.round(t.Kp * 100) / 100;
+			if (t.Ki != null) ki = Math.round(t.Ki * 10000) / 10000;
+			if (t.Kd != null) kd = Math.round(t.Kd * 100) / 100;
 		}
 	});
 
@@ -29,7 +30,23 @@
 
 	async function applyPid() {
 		if (!$deviceId) return;
+		// Suppress telemetry sync for 3s so old values don't overwrite
+		// the inputs before the ESP32 publishes the updated values.
+		suppressUntil = Date.now() + 3000;
 		await control.setPid($deviceId, kp, ki, kd).catch(notifyError('Failed to apply PID'));
+	}
+
+	function handleFocusIn() {
+		editing = true;
+	}
+
+	function handleFocusOut(e: FocusEvent) {
+		// Only clear editing if focus is leaving the entire PID container.
+		// This prevents blur→overwrite when clicking from an input to the Apply button.
+		const container = e.currentTarget as HTMLElement;
+		if (!container.contains(e.relatedTarget as Node)) {
+			editing = false;
+		}
 	}
 </script>
 
@@ -61,7 +78,12 @@
 
 	<!-- PID Parameters (visible in Auto mode) -->
 	{#if mode === 'auto'}
-		<div class="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+		<!-- svelte-ignore event_directive_deprecated -->
+		<div
+			class="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3"
+			onfocusin={handleFocusIn}
+			onfocusout={handleFocusOut}
+		>
 			<div class="grid grid-cols-3 gap-2">
 				<div>
 					<label for="pid-kp" class="text-[10px] font-medium text-amber-400">Kp</label>

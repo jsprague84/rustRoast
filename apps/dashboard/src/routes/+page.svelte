@@ -6,10 +6,34 @@
 	import LandmarkPanel from '$lib/components/LandmarkPanel.svelte';
 	import ControlPanel from '$lib/components/ControlPanel.svelte';
 	import PidControls from '$lib/components/PidControls.svelte';
+	import AutotuneDashboardWidget from '$lib/components/AutotuneDashboardWidget.svelte';
 	import EmergencyStop from '$lib/components/EmergencyStop.svelte';
 	import DeviceSelector from '$lib/components/DeviceSelector.svelte';
-	import { setSelectedDevice } from '$lib/stores/telemetry.js';
+	import { setSelectedDevice, deviceId, telemetry } from '$lib/stores/telemetry.js';
 	import { events, type RoastSession, type RoastEvent } from '$lib/api/client.js';
+	import {
+		autotuneState,
+		applyResults,
+		dismissResults
+	} from '$lib/stores/autotune.svelte.js';
+	import { notifications } from '$lib/stores/notifications.js';
+
+	let applyingBanner = $state(false);
+
+	async function handleBannerApply() {
+		if (!$deviceId) return;
+		applyingBanner = true;
+		try {
+			await applyResults($deviceId);
+			notifications.add('PID parameters applied successfully', 'success');
+			dismissResults($deviceId ?? undefined, { skipStop: true });
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			notifications.add(`Failed to apply PID parameters: ${msg}`, 'error');
+		} finally {
+			applyingBanner = false;
+		}
+	}
 
 	let activeSession = $state<RoastSession | null>(null);
 	let landmarks = $state<Array<{ type: string; elapsed_seconds: number; temperature?: number }>>([]);
@@ -62,6 +86,34 @@
 	<!-- Main content: readings + chart -->
 	<div class="flex min-w-0 flex-1 flex-col gap-4">
 		<CurrentReadings {activeSession} />
+
+		{#if autotuneState.results && !autotuneState.isAutotuning}
+			<div class="flex flex-wrap items-center gap-3 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-2">
+				<span class="text-sm font-medium text-green-400">Autotune complete — new PID values ready</span>
+				<div class="flex gap-3 text-xs text-muted-foreground">
+					<span>Kp: {$telemetry?.Kp != null ? $telemetry.Kp.toFixed(2) : '—'} → <span class="text-green-400">{autotuneState.results.Kp?.toFixed(2) ?? '—'}</span></span>
+					<span>Ki: {$telemetry?.Ki != null ? $telemetry.Ki.toFixed(4) : '—'} → <span class="text-green-400">{autotuneState.results.Ki?.toFixed(4) ?? '—'}</span></span>
+					<span>Kd: {$telemetry?.Kd != null ? $telemetry.Kd.toFixed(2) : '—'} → <span class="text-green-400">{autotuneState.results.Kd?.toFixed(2) ?? '—'}</span></span>
+				</div>
+				<div class="ml-auto flex gap-2">
+					<button
+						onclick={handleBannerApply}
+						disabled={applyingBanner}
+						class="rounded-md bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+					>
+						{applyingBanner ? 'Applying...' : 'Apply'}
+					</button>
+					<button
+						onclick={() => dismissResults($deviceId ?? undefined)}
+						disabled={applyingBanner}
+						class="rounded-md border border-border bg-card px-3 py-1 text-xs font-medium text-foreground hover:bg-background disabled:opacity-50"
+					>
+						Dismiss
+					</button>
+				</div>
+			</div>
+		{/if}
+
 		<div class="flex-1" style="min-height: 400px;">
 			<TelemetryChart {landmarks} />
 		</div>
@@ -90,6 +142,7 @@
 			<div class="rounded-lg border border-border bg-card p-4">
 				<PidControls />
 			</div>
+			<AutotuneDashboardWidget />
 		</div>
 	</div>
 </div>

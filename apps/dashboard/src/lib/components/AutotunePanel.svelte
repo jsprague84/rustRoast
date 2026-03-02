@@ -68,21 +68,29 @@
 		!autotuneState.isAutotuning && !hasActiveSession && !!$deviceId && !loading
 	);
 
-	// Check for active roast sessions
+	// Check for active roast sessions (poll every 5s so it clears after session ends)
 	$effect(() => {
 		checkActiveSessions();
+		const interval = setInterval(checkActiveSessions, 5000);
+		return () => clearInterval(interval);
 	});
 
-	// Init autotune WebSocket subscription and fetch latest status on device connect
+	// Init autotune WebSocket subscription (once)
 	$effect(() => {
 		initAutotuneSubscription();
-		const id = $deviceId;
-		if (id) {
-			fetchLatestAutotune(id);
-		}
 		return () => {
 			destroyAutotuneSubscription();
 		};
+	});
+
+	// Fetch latest autotune status only once per device (not on every telemetry tick)
+	let lastFetchedDevice: string | null = null;
+	$effect(() => {
+		const id = $deviceId;
+		if (id && id !== lastFetchedDevice) {
+			lastFetchedDevice = id;
+			fetchLatestAutotune(id);
+		}
 	});
 
 	async function checkActiveSessions() {
@@ -130,7 +138,7 @@
 		try {
 			await applyResults($deviceId);
 			notifications.add('PID parameters applied successfully', 'success');
-			dismissResults();
+			dismissResults($deviceId ?? undefined, { skipStop: true });
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			notifications.add(`Failed to apply PID parameters: ${msg}`, 'error');
@@ -140,7 +148,7 @@
 	}
 
 	function handleDiscard() {
-		dismissResults();
+		dismissResults($deviceId ?? undefined);
 	}
 </script>
 

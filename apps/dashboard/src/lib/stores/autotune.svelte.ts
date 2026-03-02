@@ -42,7 +42,8 @@ export function handleAutotuneEvent(msg: { autotune: { type: string; data: Recor
 
 	if (type === 'status') {
 		const phase = String(data.phase ?? data.state ?? '').toUpperCase();
-		const stepCount = typeof data.step_count === 'number' ? data.step_count : 0;
+		const stepCount = typeof data.current_step === 'number' ? data.current_step
+			: typeof data.step_count === 'number' ? data.step_count : 0;
 
 		// Estimate progress: ~15 relay cycles expected
 		let progress: number;
@@ -67,9 +68,12 @@ export function handleAutotuneEvent(msg: { autotune: { type: string; data: Recor
 			autotuneState.isAutotuning = false;
 		}
 	} else if (type === 'results') {
-		const Kp = typeof data.Kp === 'number' ? data.Kp : 0;
-		const Ki = typeof data.Ki === 'number' ? data.Ki : 0;
-		const Kd = typeof data.Kd === 'number' ? data.Kd : 0;
+		const Kp = typeof data.recommended_kp === 'number' ? data.recommended_kp
+			: typeof data.Kp === 'number' ? data.Kp : 0;
+		const Ki = typeof data.recommended_ki === 'number' ? data.recommended_ki
+			: typeof data.Ki === 'number' ? data.Ki : 0;
+		const Kd = typeof data.recommended_kd === 'number' ? data.recommended_kd
+			: typeof data.Kd === 'number' ? data.Kd : 0;
 		autotuneState.results = { Kp, Ki, Kd };
 	}
 }
@@ -89,6 +93,10 @@ export function destroyAutotuneSubscription() {
 // --- Actions ---
 
 export async function startAutotune(deviceId: string, targetTemp: number) {
+	// The Start button is only visible after apply or dismiss, both of which
+	// already reset the ESP32 to IDLE.  Do NOT send stop here — the ESP32's
+	// stop handler unconditionally reverts PID values to pre-autotune originals,
+	// which would undo any previously applied autotune or manual PID changes.
 	autotuneState.targetTemp = targetTemp;
 	autotuneState.status = { phase: 'HEATING', stepCount: 0, progress: 0 };
 	autotuneState.results = null;
@@ -107,44 +115,64 @@ export async function applyResults(deviceId: string) {
 	await autotuneApi.apply(deviceId);
 }
 
-export function dismissResults() {
+export function dismissResults(deviceId?: string, { skipStop = false } = {}) {
 	autotuneState.results = null;
 	autotuneState.status = null;
 	autotuneState.targetTemp = null;
+	// Reset the ESP32 out of COMPLETE state so a future start will work.
+	// Skip when results were just applied — apply already resets to IDLE,
+	// and stop would revert the PID values to the pre-autotune originals.
+	if (deviceId && !skipStop) {
+		autotuneApi.stop(deviceId).catch(() => {});
+	}
 }
 
-/** Fetch latest status/results from the API (for page refresh recovery). */
+/** Fetch latest status/results from the API (for page refresh recovery).
+ *  Uses raw fetch to avoid noisy console errors on expected 404s. */
 export async function fetchLatestAutotune(deviceId: string) {
-	try {
-		const statusResp = await autotuneApi.getLatestStatus(deviceId);
-		const data = statusResp.status;
-		const phase = String(data.phase ?? data.state ?? '').toUpperCase();
-		const stepCount = typeof data.step_count === 'number' ? data.step_count : 0;
+	const base = import.meta.env.VITE_API_URL ?? '';
+	let latestPhase = '';
 
-		const activePhases = ['HEATING', 'STABILIZING', 'RUNNING', 'ANALYZING'];
-		if (activePhases.includes(phase)) {
-			let progress: number;
-			if (phase === 'ANALYZING') {
-				progress = 95;
-			} else {
-				progress = Math.min(Math.round((stepCount / 15) * 100), 95);
+	try {
+		const statusRes = await fetch(`${base}/api/roaster/${deviceId}/autotune/status/latest`);
+		if (statusRes.ok) {
+			const statusResp = await statusRes.json();
+			const data = statusResp.status ?? statusResp;
+			latestPhase = String(data.phase ?? data.state ?? '').toUpperCase();
+			const stepCount = typeof data.current_step === 'number' ? data.current_step
+			: typeof data.step_count === 'number' ? data.step_count : 0;
+
+			const activePhases = ['HEATING', 'STABILIZING', 'RUNNING', 'ANALYZING'];
+			if (activePhases.includes(latestPhase)) {
+				const progress = latestPhase === 'ANALYZING' ? 95 : Math.min(Math.round((stepCount / 15) * 100), 95);
+				autotuneState.status = { phase: latestPhase, stepCount, progress };
+				autotuneState.isAutotuning = true;
+				autotuneState.targetTemp = typeof data.target_temperature === 'number' ? data.target_temperature : null;
 			}
-			autotuneState.status = { phase, stepCount, progress };
-			autotuneState.isAutotuning = true;
-			autotuneState.targetTemp = typeof data.target_temperature === 'number' ? data.target_temperature : null;
 		}
 	} catch {
 		// No status available — that's fine
 	}
 
-	try {
-		const resultsResp = await autotuneApi.getLatestResults(deviceId);
-		autotuneState.results = {
-			Kp: resultsResp.results.Kp,
-			Ki: resultsResp.results.Ki,
-			Kd: resultsResp.results.Kd
-		};
-	} catch {
-		// No results available — that's fine
+	// Only fetch and show results if the latest status is COMPLETE.
+	// After apply or dismiss the ESP32 transitions to IDLE, so stale
+	// results in the cache won't re-appear on page navigation.
+	if (latestPhase === 'COMPLETE') {
+		try {
+			const resultsRes = await fetch(`${base}/api/roaster/${deviceId}/autotune/results/latest`);
+			if (resultsRes.ok) {
+				const resultsResp = await resultsRes.json();
+				const data = resultsResp.results ?? resultsResp;
+				const Kp = typeof data.recommended_kp === 'number' ? data.recommended_kp
+					: typeof data.Kp === 'number' ? data.Kp : 0;
+				const Ki = typeof data.recommended_ki === 'number' ? data.recommended_ki
+					: typeof data.Ki === 'number' ? data.Ki : 0;
+				const Kd = typeof data.recommended_kd === 'number' ? data.recommended_kd
+					: typeof data.Kd === 'number' ? data.Kd : 0;
+				autotuneState.results = { Kp, Ki, Kd };
+			}
+		} catch {
+			// No results available — that's fine
+		}
 	}
 }

@@ -4,6 +4,7 @@
 	import { profiles, type CreateProfileRequest, type ProfileWithPoints } from '$lib/api/client.js';
 	import { notifications } from '$lib/stores/notifications.js';
 	import { Trash2, Table, LineChart } from 'lucide-svelte';
+	import type { GraphicComponentOption } from 'echarts/components';
 
 	interface DesignerPoint {
 		time_seconds: number;
@@ -11,39 +12,40 @@
 		fan_speed: number | null;
 	}
 
-	let {
-		initialProfile = null
-	}: {
-		initialProfile?: ProfileWithPoints | null;
-	} = $props();
+	const SYMBOL_SIZE = 14;
 
-	// Extract initial values once (intentionally non-reactive)
-	const initName = initialProfile?.name ?? '';
-	const initDescription = initialProfile?.description ?? '';
-	const initChargeTemp = initialProfile?.charge_temp ?? undefined;
-	const initTargetEndTemp = initialProfile?.target_end_temp ?? undefined;
-	const initPoints: DesignerPoint[] = initialProfile?.points
-		? [...initialProfile.points]
-				.sort((a, b) => a.time_seconds - b.time_seconds)
-				.map((p) => ({
-					time_seconds: p.time_seconds,
-					target_temp: p.target_temp,
-					fan_speed: p.fan_speed
-				}))
-		: [];
+	// The designer works on an independent snapshot of the initial profile,
+	// not a live reactive binding — intentionally capture-once.
+	const { initialProfile = null }: { initialProfile?: ProfileWithPoints | null } = $props();
+
+	// svelte-ignore state_referenced_locally
 	const profileId = initialProfile?.id ?? null;
 
-	// Metadata state
-	let name = $state(initName);
-	let description = $state(initDescription);
-	let chargeTemp = $state<number | undefined>(initChargeTemp);
-	let targetEndTemp = $state<number | undefined>(initTargetEndTemp);
-
-	// Points state
-	let points = $state<DesignerPoint[]>(initPoints);
+	// svelte-ignore state_referenced_locally
+	let name = $state(initialProfile?.name ?? '');
+	// svelte-ignore state_referenced_locally
+	let description = $state(initialProfile?.description ?? '');
+	// svelte-ignore state_referenced_locally
+	let chargeTemp = $state<number | undefined>(initialProfile?.charge_temp ?? undefined);
+	// svelte-ignore state_referenced_locally
+	let targetEndTemp = $state<number | undefined>(initialProfile?.target_end_temp ?? undefined);
+	// svelte-ignore state_referenced_locally
+	let points = $state<DesignerPoint[]>(
+		initialProfile?.points
+			? [...initialProfile.points]
+					.sort((a, b) => a.time_seconds - b.time_seconds)
+					.map((p) => ({
+						time_seconds: p.time_seconds,
+						target_temp: p.target_temp,
+						fan_speed: p.fan_speed
+					}))
+			: []
+	);
 	let selectedIndex = $state<number | null>(null);
 	let viewMode = $state<'chart' | 'table'>('chart');
 	let saving = $state(false);
+	let dragging = $state(false);
+	let chartReady = $state(false);
 
 	let chartComponent: ReturnType<typeof Chart> | undefined = $state();
 
@@ -61,7 +63,9 @@
 		};
 		points.push(newPoint);
 		points.sort((a, b) => a.time_seconds - b.time_seconds);
-		selectedIndex = points.indexOf(newPoint);
+		selectedIndex = points.findIndex(
+			(p) => p.time_seconds === newPoint.time_seconds && p.target_temp === newPoint.target_temp
+		);
 	}
 
 	// Delete selected point
@@ -86,47 +90,107 @@
 		const instance = chartComponent.getInstance();
 		if (!instance) return;
 
-		// Click on blank area to add point
+		// Click on blank area (zrender level) to add a new point.
+		// We must ignore clicks that land on a graphic element (existing point handle)
+		// and also ignore clicks that are the "mouseup" of a drag gesture.
 		instance.getZr().on('click', (params: { target?: unknown; offsetX: number; offsetY: number }) => {
-			if (params.target) return; // clicked on a series element
+			if (params.target) return; // clicked on a graphic element or series symbol
+			if (dragging) { dragging = false; return; }
 			const dataPoint = instance.convertFromPixel('grid', [params.offsetX, params.offsetY]);
 			if (dataPoint) {
-				const [timeSec, temp] = dataPoint;
+				const [timeSec, temp] = dataPoint as number[];
 				if (timeSec >= 0 && temp >= 0 && temp <= 350) {
 					addPoint(timeSec, temp);
 				}
 			}
 		});
 
-		// Click on existing point to select
-		instance.on('click', (params: { dataIndex?: number; componentType?: string; seriesName?: string }) => {
-			if (params.componentType === 'series' && params.seriesName === 'Profile' && params.dataIndex !== undefined) {
-				// Find the matching point in our sorted array
-				const sorted = sortedPoints();
-				if (params.dataIndex < sorted.length) {
-					const clickedPoint = sorted[params.dataIndex];
-					const idx = points.findIndex(
-						(p) => p.time_seconds === clickedPoint.time_seconds && p.target_temp === clickedPoint.target_temp
-					);
-					selectedIndex = idx >= 0 ? idx : null;
-				}
-			}
-		});
-
 		chartHandlersAttached = true;
+		// Trigger a re-computation of chartOption now that the instance is ready
+		// for convertToPixel/convertFromPixel calls
+		chartReady = true;
 	});
 
-	// Chart options
+	// Compute axis ranges that always give convertFromPixel a valid mapping,
+	// even when there are zero or few points.
+	function axisRange(vals: number[], defaultMax: number, padding: number): { min: number; max: number } {
+		if (vals.length === 0) return { min: 0, max: defaultMax };
+		const lo = Math.min(...vals);
+		const hi = Math.max(...vals);
+		return { min: Math.max(0, Math.floor(lo - padding)), max: Math.ceil(hi + padding) };
+	}
+
+	// Build the graphic overlay elements — draggable circles for each point
+	function buildGraphic(instance: ReturnType<NonNullable<typeof chartComponent>['getInstance']>): GraphicComponentOption[] {
+		if (!instance) return [];
+		const sorted = sortedPoints();
+		return sorted.map((pt) => {
+			const pos = instance.convertToPixel('grid', [pt.time_seconds, pt.target_temp]);
+			if (!pos) return { type: 'circle', ignore: true };
+
+			// Map back to the real index in the unsorted `points` array
+			const realIdx = points.findIndex(
+				(p) => p.time_seconds === pt.time_seconds && p.target_temp === pt.target_temp
+			);
+
+			const isSelected = selectedIndex === realIdx;
+			const [px, py] = pos as number[];
+
+			return {
+				type: 'circle',
+				x: px,
+				y: py,
+				shape: { r: SYMBOL_SIZE / 2 },
+				style: {
+					fill: isSelected ? '#ef4444' : '#f59e0b',
+					stroke: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
+					lineWidth: isSelected ? 3 : 1
+				},
+				draggable: true,
+				z: 100,
+				cursor: 'move',
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				ondrag(this: any) {
+					dragging = true;
+					const newVal = instance.convertFromPixel('grid', [this.x, this.y] as [number, number]);
+					if (!newVal || realIdx < 0) return;
+					const [newTime, newTemp] = newVal as number[];
+					points[realIdx].time_seconds = Math.max(0, Math.round(newTime));
+					points[realIdx].target_temp = Math.max(0, Math.round(newTemp * 10) / 10);
+				},
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				ondragend(this: any) {
+					// Re-sort after drag completes
+					points.sort((a, b) => a.time_seconds - b.time_seconds);
+					// Keep the same point selected (its index may have changed)
+					if (realIdx >= 0 && realIdx < points.length) {
+						const movedPt = points[realIdx];
+						selectedIndex = points.findIndex(
+							(p) => p === movedPt
+						);
+					}
+				},
+				onclick() {
+					selectedIndex = realIdx >= 0 ? realIdx : null;
+				}
+			};
+		});
+	}
+
+	// Chart options — includes graphic overlay for draggable points
 	let chartOption = $derived.by<ECOption>(() => {
 		const sorted = sortedPoints();
 		const chartData = sorted.map((p) => [p.time_seconds, p.target_temp]);
 
-		// Highlight selected point
-		let selectedData: number[][] = [];
-		if (selectedIndex !== null && selectedIndex >= 0 && selectedIndex < points.length) {
-			const p = points[selectedIndex];
-			selectedData = [[p.time_seconds, p.target_temp]];
-		}
+		const times = sorted.map((p) => p.time_seconds);
+		const temps = sorted.map((p) => p.target_temp);
+		const xRange = axisRange(times, 720, 30); // default 12 min for empty chart
+		const yRange = axisRange(temps, 250, 20);  // default 250°C for empty chart
+
+		// Build graphic overlays (draggable handles).
+		// Access chartReady to re-run this derivation after the chart instance is initialized.
+		const instance = chartReady ? chartComponent?.getInstance() : null;
+		const graphicElements: GraphicComponentOption[] = instance ? buildGraphic(instance) : [];
 
 		return {
 			animation: false,
@@ -145,7 +209,8 @@
 			xAxis: {
 				type: 'value',
 				name: 'Time (s)',
-				min: 0,
+				min: xRange.min,
+				max: xRange.max,
 				nameTextStyle: { color: '#9ca3af' },
 				axisLabel: {
 					color: '#9ca3af',
@@ -161,7 +226,8 @@
 			yAxis: {
 				type: 'value',
 				name: 'Temp (°C)',
-				min: 0,
+				min: yRange.min,
+				max: yRange.max,
 				nameTextStyle: { color: '#9ca3af' },
 				axisLabel: { color: '#9ca3af' },
 				axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
@@ -169,31 +235,17 @@
 			},
 			series: [
 				{
+					id: 'profile',
 					name: 'Profile',
 					type: 'line',
 					data: chartData,
 					itemStyle: { color: '#f59e0b' },
 					lineStyle: { width: 2 },
-					showSymbol: true,
-					symbolSize: 10,
-					emphasis: {
-						itemStyle: { borderWidth: 3, borderColor: '#fff' }
-					}
-				},
-				...(selectedData.length > 0
-					? [
-							{
-								name: 'Selected',
-								type: 'line' as const,
-								data: selectedData,
-								itemStyle: { color: '#ef4444', borderWidth: 2 },
-								symbolSize: 14,
-								showSymbol: true,
-								lineStyle: { width: 0 }
-							}
-						]
-					: [])
-			]
+					showSymbol: false,
+					symbolSize: 0
+				}
+			],
+			graphic: graphicElements
 		};
 	});
 
@@ -347,7 +399,7 @@
 		</div>
 
 		{#if viewMode === 'chart'}
-			<p class="mb-2 text-xs text-muted-foreground">Click on the chart to add points. Click a point to select it.</p>
+			<p class="mb-2 text-xs text-muted-foreground">Click to add points. Drag points to move them. Click a point to select, then press Delete to remove.</p>
 			<div style="height: 350px;">
 				<Chart bind:this={chartComponent} option={chartOption} />
 			</div>
@@ -368,7 +420,7 @@
 						</thead>
 						<tbody>
 							{#each sortedPoints() as point, i}
-								{@const realIndex = points.indexOf(point)}
+								{@const realIndex = points.findIndex((p) => p.time_seconds === point.time_seconds && p.target_temp === point.target_temp)}
 								<tr
 									class="border-b border-border/50 {selectedIndex === realIndex ? 'bg-amber-500/10' : 'hover:bg-accent'}"
 									onclick={() => (selectedIndex = realIndex)}

@@ -1,15 +1,87 @@
 <script lang="ts">
 	import type { PageProps } from './$types';
+	import { goto } from '$app/navigation';
 	import Chart, { type ECOption } from '$lib/components/Chart.svelte';
 	import KeyTemperatures from '$lib/components/KeyTemperatures.svelte';
 	import PhaseTimingTable from '$lib/components/PhaseTimingTable.svelte';
 	import { landmarkColors, landmarkLabels } from '$lib/constants/landmarks.js';
 	import type { SessionTelemetryPoint } from '$lib/types/session.js';
+	import { sessions } from '$lib/api/client.js';
+	import type { ProfileWithPoints } from '$lib/api/client.js';
+	import { notifications } from '$lib/stores/notifications.js';
 
 	let { data }: PageProps = $props();
 
 	let sessionData = $derived(data.session);
 	let sessionEvents = $derived(data.events);
+
+	async function handleDelete() {
+		if (!confirm('Delete this session? This cannot be undone.')) return;
+		try {
+			await sessions.delete(sessionData.id);
+			notifications.add('Session deleted', 'success');
+			goto('/sessions');
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			notifications.add(`Failed to delete session: ${msg}`, 'error');
+		}
+	}
+
+	function handleSaveAsProfile() {
+		const telemetry = sessionData.telemetry ?? [];
+		if (!telemetry.length) {
+			notifications.add('No telemetry data to create a profile from', 'warning');
+			return;
+		}
+
+		// Decimate to ~1 point per 30s if there are many points
+		const interval = 30;
+		let decimated: SessionTelemetryPoint[];
+		if (telemetry.length > 60) {
+			decimated = [];
+			let nextTime = 0;
+			for (const pt of telemetry) {
+				if (pt.elapsed_seconds >= nextTime) {
+					decimated.push(pt);
+					nextTime = pt.elapsed_seconds + interval;
+				}
+			}
+			// Always include the last point
+			const last = telemetry[telemetry.length - 1];
+			if (decimated[decimated.length - 1] !== last) {
+				decimated.push(last);
+			}
+		} else {
+			decimated = telemetry;
+		}
+
+		const points = decimated
+			.filter((t) => t.bean_temp != null)
+			.map((t) => ({
+				id: '',
+				time_seconds: t.elapsed_seconds,
+				target_temp: t.bean_temp!,
+				fan_speed: t.fan_pwm != null ? Math.round(t.fan_pwm / 2.55) : null,
+				notes: null
+			}));
+
+		const firstTemp = points[0]?.target_temp ?? null;
+		const lastTemp = points[points.length - 1]?.target_temp ?? null;
+
+		const fromSession: ProfileWithPoints = {
+			id: '',
+			name: `${sessionData.name} (from session)`,
+			description: null,
+			target_total_time: sessionData.total_time_seconds ?? null,
+			target_end_temp: lastTemp,
+			charge_temp: firstTemp,
+			created_at: '',
+			points
+		};
+
+		sessionStorage.setItem('rustroast_profile_from_session', JSON.stringify(fromSession));
+		goto('/profiles/new');
+	}
 
 	function formatDate(iso: string): string {
 		return new Date(iso).toLocaleString();
@@ -105,6 +177,24 @@
 				{sessionData.status === 'completed' ? 'bg-green-500/15 text-green-400' : 'bg-muted text-muted-foreground'}">
 				{sessionData.status}
 			</span>
+			<div class="ml-auto flex items-center gap-2">
+				<button
+					onclick={handleSaveAsProfile}
+					class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+					title="Save as profile"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+					Save as Profile
+				</button>
+				<button
+					onclick={handleDelete}
+					class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/15"
+					title="Delete session"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+					Delete
+				</button>
+			</div>
 		</div>
 
 		<!-- Metadata -->

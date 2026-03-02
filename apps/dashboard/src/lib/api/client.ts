@@ -244,7 +244,7 @@ export interface CreateProfileRequest {
 
 export const profiles = {
 	list: () =>
-		request<RoastProfile[]>('/api/profiles'),
+		request<RoastProfile[]>('/api/profiles?include_private=true'),
 
 	get: (id: string) =>
 		request<ProfileWithPoints>(`/api/profiles/${id}`),

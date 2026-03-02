@@ -39,7 +39,7 @@ describe('autotune store', () => {
 
 		it('transitions to HEATING phase', () => {
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'HEATING', step_count: 0 } }
+				autotune: { type: 'status', data: { phase: 'HEATING', current_step: 0 } }
 			});
 
 			expect(autotuneState.status?.phase).toBe('HEATING');
@@ -49,7 +49,7 @@ describe('autotune store', () => {
 
 		it('transitions through STABILIZING phase', () => {
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'STABILIZING', step_count: 0 } }
+				autotune: { type: 'status', data: { phase: 'STABILIZING', current_step: 0 } }
 			});
 
 			expect(autotuneState.status?.phase).toBe('STABILIZING');
@@ -58,7 +58,7 @@ describe('autotune store', () => {
 
 		it('transitions to RUNNING phase with step count and progress', () => {
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'RUNNING', step_count: 7 } }
+				autotune: { type: 'status', data: { phase: 'RUNNING', current_step: 7 } }
 			});
 
 			expect(autotuneState.status?.phase).toBe('RUNNING');
@@ -70,7 +70,7 @@ describe('autotune store', () => {
 
 		it('transitions to ANALYZING phase at 95% progress', () => {
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'ANALYZING', step_count: 15 } }
+				autotune: { type: 'status', data: { phase: 'ANALYZING', current_step: 15 } }
 			});
 
 			expect(autotuneState.status?.phase).toBe('ANALYZING');
@@ -80,7 +80,7 @@ describe('autotune store', () => {
 
 		it('transitions to COMPLETE phase at 100% and stops autotuning', () => {
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'COMPLETE', step_count: 15 } }
+				autotune: { type: 'status', data: { phase: 'COMPLETE', current_step: 15 } }
 			});
 
 			expect(autotuneState.status?.phase).toBe('COMPLETE');
@@ -92,7 +92,7 @@ describe('autotune store', () => {
 			handleAutotuneEvent({
 				autotune: {
 					type: 'status',
-					data: { phase: 'ERROR', step_count: 0, error: 'Temperature sensor failed' }
+					data: { phase: 'ERROR', current_step: 0, error: 'Temperature sensor failed' }
 				}
 			});
 
@@ -103,7 +103,7 @@ describe('autotune store', () => {
 
 		it('caps progress at 95% during RUNNING phase', () => {
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'RUNNING', step_count: 20 } }
+				autotune: { type: 'status', data: { phase: 'RUNNING', current_step: 20 } }
 			});
 
 			// (20/15)*100 = 133, capped at 95
@@ -112,10 +112,18 @@ describe('autotune store', () => {
 
 		it('normalizes phase to uppercase', () => {
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'running', step_count: 5 } }
+				autotune: { type: 'status', data: { phase: 'running', current_step: 5 } }
 			});
 
 			expect(autotuneState.status?.phase).toBe('RUNNING');
+		});
+
+		it('falls back to step_count when current_step is absent', () => {
+			handleAutotuneEvent({
+				autotune: { type: 'status', data: { phase: 'RUNNING', step_count: 7 } }
+			});
+
+			expect(autotuneState.status?.stepCount).toBe(7);
 		});
 
 		it('handles full idle → heating → running → complete lifecycle', () => {
@@ -124,14 +132,14 @@ describe('autotune store', () => {
 
 			// Heating
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'HEATING', step_count: 0 } }
+				autotune: { type: 'status', data: { phase: 'HEATING', current_step: 0 } }
 			});
 			expect(autotuneState.isAutotuning).toBe(true);
 			expect(autotuneState.status?.phase).toBe('HEATING');
 
 			// Running with progress
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'RUNNING', step_count: 10 } }
+				autotune: { type: 'status', data: { phase: 'RUNNING', current_step: 10 } }
 			});
 			expect(autotuneState.isAutotuning).toBe(true);
 			expect(autotuneState.status?.phase).toBe('RUNNING');
@@ -139,7 +147,7 @@ describe('autotune store', () => {
 
 			// Complete
 			handleAutotuneEvent({
-				autotune: { type: 'status', data: { phase: 'COMPLETE', step_count: 15 } }
+				autotune: { type: 'status', data: { phase: 'COMPLETE', current_step: 15 } }
 			});
 			expect(autotuneState.isAutotuning).toBe(false);
 			expect(autotuneState.status?.phase).toBe('COMPLETE');
@@ -150,12 +158,20 @@ describe('autotune store', () => {
 	// --- handleAutotuneEvent result parsing ---
 
 	describe('handleAutotuneEvent result parsing', () => {
-		it('parses Kp, Ki, Kd from results event', () => {
+		it('parses recommended_kp/ki/kd from results event', () => {
 			handleAutotuneEvent({
-				autotune: { type: 'results', data: { Kp: 2.5, Ki: 0.005, Kd: 1.2 } }
+				autotune: { type: 'results', data: { recommended_kp: 2.5, recommended_ki: 0.005, recommended_kd: 1.2 } }
 			});
 
 			expect(autotuneState.results).toEqual({ Kp: 2.5, Ki: 0.005, Kd: 1.2 });
+		});
+
+		it('falls back to Kp/Ki/Kd when recommended_ fields are absent', () => {
+			handleAutotuneEvent({
+				autotune: { type: 'results', data: { Kp: 3.0, Ki: 0.01, Kd: 2.0 } }
+			});
+
+			expect(autotuneState.results).toEqual({ Kp: 3.0, Ki: 0.01, Kd: 2.0 });
 		});
 
 		it('defaults missing PID values to 0', () => {
