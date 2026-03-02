@@ -37,6 +37,22 @@ export function stopFollowing() {
 	profileState.lastSentSetpoint = null;
 }
 
+// --- Pure hysteresis check (exported for unit testing) ---
+
+/**
+ * Determines whether a new setpoint should be sent based on hysteresis threshold.
+ * @param newTarget - The new interpolated target temperature
+ * @param lastSent - The last setpoint that was sent (null if none sent yet)
+ * @param threshold - Minimum delta to trigger a new send (default 1.0°C)
+ */
+export function shouldSendSetpoint(
+	newTarget: number,
+	lastSent: number | null,
+	threshold = 1.0
+): boolean {
+	return lastSent === null || Math.abs(newTarget - lastSent) >= threshold;
+}
+
 // --- Pure interpolation function (exported for unit testing) ---
 
 /**

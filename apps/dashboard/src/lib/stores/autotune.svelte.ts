@@ -34,7 +34,8 @@ export const autotuneState = $state<{
 
 let unsubscribe: (() => void) | null = null;
 
-function handleAutotuneEvent(msg: { autotune: { type: string; data: Record<string, unknown> } } | null) {
+/** Process an autotune WebSocket event. Exported for unit testing. */
+export function handleAutotuneEvent(msg: { autotune: { type: string; data: Record<string, unknown> } } | null) {
 	if (!msg) return;
 
 	const { type, data } = msg.autotune;
