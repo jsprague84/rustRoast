@@ -6,6 +6,7 @@ use prometheus::IntGaugeVec;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tokio::sync::{broadcast, RwLock};
+use uuid::Uuid;
 
 use crate::models::DeviceStatus;
 use crate::services::DeviceService;
@@ -151,9 +152,14 @@ impl TelemetryService {
         // Record to active session telemetry (skip for disabled devices)
         let is_disabled = device_status == Some(&DeviceStatus::Disabled);
         if !is_disabled {
-            let _ = sqlx::query(r#"
-                INSERT INTO session_telemetry (session_id, timestamp, bean_temp, env_temp, rate_of_rise, heater_pwm, fan_pwm, setpoint)
-                SELECT s.id, ?,
+            let point_id = Uuid::new_v4().to_string();
+            let result = sqlx::query(r#"
+                INSERT INTO session_telemetry (id, session_id, timestamp, elapsed_seconds, bean_temp, env_temp, rate_of_rise, heater_pwm, fan_pwm, setpoint)
+                SELECT ?, s.id, ?,
+                       CASE WHEN s.start_time IS NOT NULL
+                            THEN CAST(? AS REAL) - CAST(strftime('%s', s.start_time) AS REAL)
+                            ELSE 0.0
+                       END,
                        json_extract(?, '$.beanTemp'),
                        json_extract(?, '$.envTemp'),
                        json_extract(?, '$.rateOfRise'),
@@ -163,7 +169,9 @@ impl TelemetryService {
                 FROM roast_sessions s
                 WHERE s.device_id = ? AND s.status = 'active'
             "#)
+                .bind(&point_id)
                 .bind(now as i64)
+                .bind(now as f64)
                 .bind(&payload_str)
                 .bind(&payload_str)
                 .bind(&payload_str)
@@ -173,6 +181,9 @@ impl TelemetryService {
                 .bind(device_id)
                 .execute(&self.db)
                 .await;
+            if let Err(e) = result {
+                tracing::warn!(%device_id, error = %e, "Failed to insert session telemetry");
+            }
         }
 
         // Debounced last-seen update (at most once per 10 seconds per device)

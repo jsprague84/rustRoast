@@ -28,7 +28,7 @@
 	onclick={emergencyStop}
 	disabled={!$deviceId || stopping}
 	aria-label="Emergency stop"
-	class="fixed bottom-4 right-4 z-50 flex items-center gap-2 rounded-full bg-red-600 px-6 py-3 text-lg font-bold text-white shadow-lg hover:bg-red-700 active:bg-red-800 disabled:opacity-50"
+	class="fixed bottom-4 left-4 z-50 flex items-center gap-2 rounded-full bg-red-600 px-6 py-3 text-lg font-bold text-white shadow-lg hover:bg-red-700 active:bg-red-800 disabled:opacity-50"
 >
 	<OctagonX class="h-5 w-5" />
 	{stopping ? '...' : 'STOP'}

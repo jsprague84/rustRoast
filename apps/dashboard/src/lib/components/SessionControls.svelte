@@ -3,7 +3,7 @@
 	import { deviceId } from '$lib/stores/telemetry.js';
 	import { clearHistory } from '$lib/stores/telemetry.js';
 	import { notifications } from '$lib/stores/notifications.js';
-	import { loadProfile } from '$lib/stores/profile.svelte.js';
+	import { loadProfile, unloadProfile } from '$lib/stores/profile.svelte.js';
 	import RoastTimer from './RoastTimer.svelte';
 
 	let { onchange }: { onchange?: (session: RoastSession | null) => void } = $props();
@@ -29,6 +29,15 @@
 
 	$effect(() => {
 		fetchProfiles();
+	});
+
+	// Load/unload profile preview when selection changes
+	$effect(() => {
+		if (selectedProfileId) {
+			loadProfile(selectedProfileId).catch(() => {});
+		} else {
+			unloadProfile();
+		}
 	});
 
 	async function fetchProfiles() {
@@ -151,6 +160,7 @@
 				await control.setHeaterEnable($deviceId, false).catch(() => {});
 			}
 			await sessions.complete(activeSession.id);
+			unloadProfile();
 			notifyChange(null);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);

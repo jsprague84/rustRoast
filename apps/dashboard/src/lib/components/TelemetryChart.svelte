@@ -93,8 +93,41 @@
 			});
 		}
 
+		// Autotune on-chart overlay
+		const graphicElements: Array<Record<string, unknown>> = [];
+		if (autotuneState.isAutotuning && autotuneState.status) {
+			const step = autotuneState.status.stepCount;
+			const phase = autotuneState.status.phase.charAt(0) + autotuneState.status.phase.slice(1).toLowerCase();
+			graphicElements.push({
+				type: 'text',
+				right: 70,
+				top: 8,
+				style: {
+					text: `AT: ${phase} (Step ${step}/~15)`,
+					fill: '#f97316',
+					fontSize: 13,
+					fontWeight: 'bold'
+				},
+				z: 100
+			});
+		} else if (autotuneState.results && !autotuneState.isAutotuning) {
+			graphicElements.push({
+				type: 'text',
+				right: 70,
+				top: 8,
+				style: {
+					text: 'AT: Results Ready',
+					fill: '#22c55e',
+					fontSize: 13,
+					fontWeight: 'bold'
+				},
+				z: 100
+			});
+		}
+
 		const option: ECOption = {
 			title: { show: false },
+			graphic: graphicElements,
 			animation: false,
 			grid: { left: 50, right: 60, top: 30, bottom: 40, backgroundColor: 'transparent' },
 			tooltip: {

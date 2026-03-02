@@ -6,7 +6,8 @@
 		GridComponent,
 		TitleComponent,
 		TooltipComponent,
-		MarkLineComponent
+		MarkLineComponent,
+		GraphicComponent
 	} from 'echarts/components';
 	import { CanvasRenderer } from 'echarts/renderers';
 	import type { ECharts, ComposeOption } from 'echarts/core';
@@ -15,7 +16,8 @@
 		GridComponentOption,
 		TitleComponentOption,
 		TooltipComponentOption,
-		MarkLineComponentOption
+		MarkLineComponentOption,
+		GraphicComponentOption
 	} from 'echarts/components';
 
 	export type ECOption = ComposeOption<
@@ -24,9 +26,10 @@
 		| TitleComponentOption
 		| TooltipComponentOption
 		| MarkLineComponentOption
+		| GraphicComponentOption
 	>;
 
-	echarts.use([LineChart, GridComponent, TitleComponent, TooltipComponent, MarkLineComponent, CanvasRenderer]);
+	echarts.use([LineChart, GridComponent, TitleComponent, TooltipComponent, MarkLineComponent, GraphicComponent, CanvasRenderer]);
 
 	let { option = $bindable<ECOption>({}) }: { option: ECOption } = $props();
 
@@ -52,7 +55,7 @@
 
 	$effect(() => {
 		if (chart && option) {
-			chart.setOption(option, { notMerge: false });
+			chart.setOption(option, { replaceMerge: ['series', 'graphic'] });
 		}
 	});
 
