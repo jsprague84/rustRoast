@@ -13,6 +13,7 @@
 - Svelte 5 `$props()` values referenced outside reactive contexts trigger `state_referenced_locally` warning — extract to plain `const` variables to make intent clear
 - WebSocket messages are polymorphic: check for `msg.telemetry` vs `msg.autotune` key to determine type — parse as generic JSON first
 - Autotune API endpoints: start/stop/apply require auth (POST), status/results latest are public (GET); API client namespace is `autotune` in client.ts
+- Vitest `.svelte.ts` testing requires: `svelte()` plugin + `resolve.conditions: ['browser']` in vitest.config.ts; import with `.svelte.js` extension; mock `fetch` before module imports; reset `$state` in `afterEach`
 
 # Ralph Progress Log
 Started: Sun Mar  1 05:07:32 PM CST 2026
@@ -287,4 +288,27 @@ Started: Sun Mar  1 05:07:32 PM CST 2026
   - Input clamping via `Math.max(min, Math.min(max, value))` before save prevents out-of-range values even if browser validation is bypassed
   - Consistent UX pattern on settings page: confirmation message via `$state` boolean + `setTimeout` for auto-dismiss
   - Label `for` attribute + input `id` ensures accessibility (no a11y warnings)
+---
+
+## 2026-03-01 - PF-011
+- What was implemented: Frontend unit tests for profile and autotune features
+  - `profile.test.ts`: 21 tests covering interpolateTarget (linear interpolation, boundary conditions, single-point, unsorted points, lookahead), profile store state (loadProfile, unloadProfile, startFollowing, stopFollowing), and hysteresis logic (shouldSendSetpoint with threshold checks)
+  - `autotune.test.ts`: 15 tests covering handleAutotuneEvent status transitions (HEATING → STABILIZING → RUNNING → ANALYZING → COMPLETE, ERROR, progress capping, phase normalization), result parsing (Kp/Ki/Kd extraction, defaults), and actions (startAutotune, stopAutotune, dismissResults)
+  - Added `shouldSendSetpoint` pure function to profile store for testable hysteresis logic
+  - Exported `handleAutotuneEvent` from autotune store for direct testing
+  - Updated vitest.config.ts with `svelte()` plugin and `resolve.conditions: ['browser']` to enable `.svelte.ts` rune store imports in tests
+- Files changed:
+  - `apps/dashboard/src/lib/stores/profile.test.ts` — new test file (21 tests)
+  - `apps/dashboard/src/lib/stores/autotune.test.ts` — new test file (15 tests)
+  - `apps/dashboard/src/lib/stores/profile.svelte.ts` — added `shouldSendSetpoint` pure function
+  - `apps/dashboard/src/lib/stores/autotune.svelte.ts` — exported `handleAutotuneEvent`
+  - `apps/dashboard/vitest.config.ts` — added svelte plugin and browser resolve condition
+- **Learnings for future iterations:**
+  - Vitest needs `svelte()` from `@sveltejs/vite-plugin-svelte` to compile `.svelte.ts` files that use `$state` runes
+  - `resolve.conditions: ['browser']` is required so jsdom tests use the client-side Svelte runtime (runes don't work with server bundle)
+  - Import `.svelte.ts` modules in tests using `.svelte.js` extension (TypeScript convention), e.g., `from './profile.svelte.js'`
+  - Mock `fetch` with `vi.stubGlobal('fetch', mockFetch)` BEFORE importing modules that use the API client — order matters for module initialization
+  - `$state` proxy objects work correctly with vitest's `toEqual` for deep comparison
+  - Module-level `$state` persists between tests — always reset state in `afterEach` (call `unloadProfile()` or manually reset properties)
+  - Pure functions extracted from reactive stores are the easiest to unit test — prefer this pattern for core logic
 ---

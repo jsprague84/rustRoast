@@ -285,7 +285,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 16,
-      "passes": false,
+      "passes": true,
       "notes": "Tests go in files alongside source: e.g., $lib/stores/profile.test.ts, $lib/stores/autotune.test.ts. The project uses vitest (see existing tests: $lib/stores/telemetry.test.ts). For testing Svelte 5 rune stores (.svelte.ts files), you may need to test the exported pure functions directly rather than the reactive state. The interpolateTarget function should be a pure exported function specifically for testability. Mock fetch for API calls in store tests."
     }
   ]
