@@ -161,25 +161,21 @@ async fn main() {
         device_ws_senders,
     };
 
-    // Static Swagger UI served at /docs; not generating OpenAPI from code for now
-    // Static frontend at /app (optional)
+    // Static frontend (SPA fallback)
     let server_crate_dir = env!("CARGO_MANIFEST_DIR");
-    let default_app_dir = PathBuf::from(server_crate_dir).join("../../apps/dashboard/dist");
+    let default_app_dir = PathBuf::from(server_crate_dir).join("../../apps/dashboard/build");
     let app_dir = std::env::var("RUSTROAST_APP_DIR").unwrap_or_else(|_| default_app_dir.to_string_lossy().to_string());
-    let static_service = ServeDir::new(app_dir.clone())
-        .not_found_service(ServeFile::new(format!("{}/index.html", app_dir)));
+    let spa_fallback = ServeDir::new(app_dir.clone())
+        .fallback(ServeFile::new(format!("{}/index.html", app_dir)));
 
     let app = Router::new()
-        .route("/", get(|| async { axum::response::Redirect::permanent("/app/") }))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/version", get(version))
         .route("/metrics", get(metrics_handler))
-        // Static OpenAPI (Option A)
+        // Static OpenAPI
         .route("/api-docs/openapi.json", get(serve_openapi_json))
         .route("/docs", get(serve_swagger_ui_html))
-        // Frontend
-        .nest_service("/app", static_service)
         
         // Swagger UI can be added here when OpenAPI spec is generated
         // Control API
@@ -241,7 +237,8 @@ async fn main() {
         .route("/api/settings/:key", put(api_set_setting))
         // Device Configuration API (DEV-004)
         .merge(device_routes())
-        .with_state(state.clone());
+        .with_state(state.clone())
+        .fallback_service(spa_fallback);
 
     let addr: SocketAddr = std::env::var("RUSTROAST_HTTP_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
