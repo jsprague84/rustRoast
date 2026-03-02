@@ -1,0 +1,13 @@
+target/
+node_modules/
+.git/
+data/
+docker/
+*.md
+.env
+.env.*
+.github/
+ralph/
+tasks/
+tools/
+Esp32_FluidBedCoffeeRoaster/
