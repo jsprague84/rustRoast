@@ -1,9 +1,9 @@
 use crate::models::*;
-use sqlx::{SqlitePool, Row};
-use uuid::Uuid;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
+use sqlx::{Row, SqlitePool};
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct RoastSessionService {
@@ -19,7 +19,7 @@ impl RoastSessionService {
     pub async fn create_session(&self, req: CreateSessionRequest) -> Result<RoastSession> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
-        
+
         let session = sqlx::query_as::<_, RoastSession>(
             r#"
             INSERT INTO roast_sessions (
@@ -28,7 +28,7 @@ impl RoastSessionService {
                 notes, ambient_temp, humidity
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING *
-            "#
+            "#,
         )
         .bind(&id)
         .bind(&req.name)
@@ -51,47 +51,53 @@ impl RoastSessionService {
         Ok(session)
     }
 
-    pub async fn list_sessions(&self, device_id: Option<&str>, limit: Option<i32>) -> Result<Vec<RoastSession>> {
+    pub async fn list_sessions(
+        &self,
+        device_id: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<RoastSession>> {
         let mut query = "SELECT * FROM roast_sessions".to_string();
         let mut conditions = Vec::new();
-        
+
         if device_id.is_some() {
             conditions.push("device_id = ?");
         }
-        
+
         if !conditions.is_empty() {
             query.push_str(" WHERE ");
             query.push_str(&conditions.join(" AND "));
         }
-        
+
         query.push_str(" ORDER BY created_at DESC");
-        
+
         if let Some(limit) = limit {
             query.push_str(&format!(" LIMIT {}", limit));
         }
 
         let mut query_builder = sqlx::query_as::<_, RoastSession>(&query);
-        
+
         if let Some(device_id) = device_id {
             query_builder = query_builder.bind(device_id);
         }
-        
+
         let sessions = query_builder.fetch_all(&self.db).await?;
         Ok(sessions)
     }
 
     pub async fn get_session(&self, id: &str) -> Result<Option<RoastSession>> {
-        let session = sqlx::query_as::<_, RoastSession>(
-            "SELECT * FROM roast_sessions WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?;
+        let session =
+            sqlx::query_as::<_, RoastSession>("SELECT * FROM roast_sessions WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.db)
+                .await?;
 
         Ok(session)
     }
 
-    pub async fn get_session_with_telemetry(&self, id: &str) -> Result<Option<SessionWithTelemetry>> {
+    pub async fn get_session_with_telemetry(
+        &self,
+        id: &str,
+    ) -> Result<Option<SessionWithTelemetry>> {
         let session = match self.get_session(id).await? {
             Some(s) => s,
             None => return Ok(None),
@@ -111,15 +117,23 @@ impl RoastSessionService {
         }))
     }
 
-    pub async fn update_session(&self, id: &str, req: UpdateSessionRequest) -> Result<Option<RoastSession>> {
+    pub async fn update_session(
+        &self,
+        id: &str,
+        req: UpdateSessionRequest,
+    ) -> Result<Option<RoastSession>> {
         // Check if there are any fields to update
-        if req.name.is_none() && req.roasted_weight.is_none() && req.notes.is_none() 
-           && req.first_crack_time.is_none() && req.development_time_ratio.is_none() {
+        if req.name.is_none()
+            && req.roasted_weight.is_none()
+            && req.notes.is_none()
+            && req.first_crack_time.is_none()
+            && req.development_time_ratio.is_none()
+        {
             return self.get_session(id).await;
         }
 
         let now = Utc::now();
-        
+
         // Build the update query with specific conditions for each field
         let mut query = "UPDATE roast_sessions SET updated_at = ?".to_string();
 
@@ -138,12 +152,12 @@ impl RoastSessionService {
         if req.development_time_ratio.is_some() {
             query.push_str(", development_time_ratio = ?");
         }
-        
+
         query.push_str(" WHERE id = ? RETURNING *");
-        
+
         // Build the query with conditional binding
         let mut query_builder = sqlx::query_as::<_, RoastSession>(&query).bind(now);
-        
+
         if let Some(ref name) = req.name {
             query_builder = query_builder.bind(name);
         }
@@ -159,9 +173,9 @@ impl RoastSessionService {
         if let Some(development_time_ratio) = req.development_time_ratio {
             query_builder = query_builder.bind(development_time_ratio);
         }
-        
+
         query_builder = query_builder.bind(id);
-        
+
         let session = query_builder.fetch_optional(&self.db).await?;
         Ok(session)
     }
@@ -173,7 +187,7 @@ impl RoastSessionService {
             SET status = ?, start_time = ?, updated_at = ?
             WHERE id = ? AND status = ?
             RETURNING *
-            "#
+            "#,
         )
         .bind(SessionStatus::Active.to_string())
         .bind(Utc::now())
@@ -193,7 +207,7 @@ impl RoastSessionService {
             SET status = ?, updated_at = ?
             WHERE id = ? AND status = ?
             RETURNING *
-            "#
+            "#,
         )
         .bind(SessionStatus::Paused.to_string())
         .bind(Utc::now())
@@ -212,7 +226,7 @@ impl RoastSessionService {
             SET status = ?, updated_at = ?
             WHERE id = ? AND status = ?
             RETURNING *
-            "#
+            "#,
         )
         .bind(SessionStatus::Active.to_string())
         .bind(Utc::now())
@@ -226,7 +240,7 @@ impl RoastSessionService {
 
     pub async fn complete_session(&self, id: &str) -> Result<Option<RoastSession>> {
         let now = Utc::now();
-        
+
         // Calculate total time and max temperature from telemetry
         let stats = sqlx::query(
             r#"
@@ -235,7 +249,7 @@ impl RoastSessionService {
                 MAX(bean_temp) as max_temp
             FROM session_telemetry 
             WHERE session_id = ?
-            "#
+            "#,
         )
         .bind(id)
         .fetch_optional(&self.db)
@@ -255,7 +269,7 @@ impl RoastSessionService {
             SET status = ?, end_time = ?, updated_at = ?, total_time_seconds = ?, max_temp = ?
             WHERE id = ? AND status IN (?, ?)
             RETURNING *
-            "#
+            "#,
         )
         .bind(SessionStatus::Completed.to_string())
         .bind(now)
@@ -282,19 +296,26 @@ impl RoastSessionService {
 
     // Telemetry Management
     #[allow(clippy::too_many_arguments)]
-    pub async fn add_telemetry_point(&self, session_id: &str, elapsed_seconds: f32,
-                                    bean_temp: Option<f32>, env_temp: Option<f32>,
-                                    rate_of_rise: Option<f32>, heater_pwm: Option<i32>,
-                                    fan_pwm: Option<i32>, setpoint: Option<f32>) -> Result<()> {
+    pub async fn add_telemetry_point(
+        &self,
+        session_id: &str,
+        elapsed_seconds: f32,
+        bean_temp: Option<f32>,
+        env_temp: Option<f32>,
+        rate_of_rise: Option<f32>,
+        heater_pwm: Option<i32>,
+        fan_pwm: Option<i32>,
+        setpoint: Option<f32>,
+    ) -> Result<()> {
         let id = Uuid::new_v4().to_string();
-        
+
         sqlx::query(
             r#"
             INSERT INTO session_telemetry (
                 id, session_id, timestamp, elapsed_seconds, bean_temp, env_temp,
                 rate_of_rise, heater_pwm, fan_pwm, setpoint
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#
+            "#,
         )
         .bind(id)
         .bind(session_id)
@@ -314,7 +335,7 @@ impl RoastSessionService {
 
     pub async fn get_session_telemetry(&self, session_id: &str) -> Result<Vec<SessionTelemetry>> {
         let telemetry = sqlx::query_as::<_, SessionTelemetry>(
-            "SELECT * FROM session_telemetry WHERE session_id = ? ORDER BY elapsed_seconds"
+            "SELECT * FROM session_telemetry WHERE session_id = ? ORDER BY elapsed_seconds",
         )
         .bind(session_id)
         .fetch_all(&self.db)
@@ -337,7 +358,7 @@ impl RoastSessionService {
                 preheat_temp, charge_temp
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING *
-            "#
+            "#,
         )
         .bind(&id)
         .bind(&req.name)
@@ -363,7 +384,7 @@ impl RoastSessionService {
                     id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 RETURNING *
-                "#
+                "#,
             )
             .bind(&point_id)
             .bind(&id)
@@ -374,7 +395,7 @@ impl RoastSessionService {
             .bind(now)
             .fetch_one(&self.db)
             .await?;
-            
+
             points.push(point);
         }
 
@@ -396,19 +417,18 @@ impl RoastSessionService {
     }
 
     pub async fn get_profile_with_points(&self, id: &str) -> Result<Option<ProfileWithPoints>> {
-        let profile = sqlx::query_as::<_, RoastProfile>(
-            "SELECT * FROM roast_profiles WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?;
+        let profile =
+            sqlx::query_as::<_, RoastProfile>("SELECT * FROM roast_profiles WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.db)
+                .await?;
 
         let Some(profile) = profile else {
             return Ok(None);
         };
 
         let points = sqlx::query_as::<_, ProfilePoint>(
-            "SELECT * FROM profile_points WHERE profile_id = ? ORDER BY time_seconds"
+            "SELECT * FROM profile_points WHERE profile_id = ? ORDER BY time_seconds",
         )
         .bind(id)
         .fetch_all(&self.db)
@@ -426,7 +446,11 @@ impl RoastSessionService {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn update_profile(&self, id: &str, req: CreateProfileRequest) -> Result<Option<ProfileWithPoints>> {
+    pub async fn update_profile(
+        &self,
+        id: &str,
+        req: CreateProfileRequest,
+    ) -> Result<Option<ProfileWithPoints>> {
         let now = Utc::now();
         let mut tx = self.db.begin().await?;
 
@@ -438,7 +462,7 @@ impl RoastSessionService {
                 target_total_time = ?, target_first_crack = ?, target_end_temp = ?,
                 preheat_temp = ?, charge_temp = ?
             WHERE id = ?
-            "#
+            "#,
         )
         .bind(&req.name)
         .bind(&req.description)
@@ -469,7 +493,7 @@ impl RoastSessionService {
                 INSERT INTO profile_points (
                     id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                "#
+                "#,
             )
             .bind(&point_id)
             .bind(id)
@@ -488,13 +512,20 @@ impl RoastSessionService {
         self.get_profile_with_points(id).await
     }
 
-    pub async fn import_artisan_profile(&self, req: ImportArtisanProfileRequest) -> Result<ProfileWithPoints> {
+    pub async fn import_artisan_profile(
+        &self,
+        req: ImportArtisanProfileRequest,
+    ) -> Result<ProfileWithPoints> {
         let parsed = parse_artisan_alog(&req.alog_content)?;
-        
+
         // Create profile from parsed data
-        let profile_name = req.name.unwrap_or_else(|| 
-            if parsed.title.is_empty() { "Imported Artisan Profile".to_string() } else { parsed.title.clone() }
-        );
+        let profile_name = req.name.unwrap_or_else(|| {
+            if parsed.title.is_empty() {
+                "Imported Artisan Profile".to_string()
+            } else {
+                parsed.title.clone()
+            }
+        });
 
         // Convert parsed data to profile points
         let mut points = Vec::new();
@@ -513,14 +544,21 @@ impl RoastSessionService {
 
         let create_req = CreateProfileRequest {
             name: profile_name,
-            description: Some(format!("Imported from Artisan - Date: {}", parsed.roast_date)),
+            description: Some(format!(
+                "Imported from Artisan - Date: {}",
+                parsed.roast_date
+            )),
             target_total_time: Some(parsed.total_time as i32),
-            target_first_crack: parsed.events.iter()
+            target_first_crack: parsed
+                .events
+                .iter()
                 .find(|e| e.event_type == "FCs")
                 .map(|e| e.time as i32),
             target_end_temp: parsed.points.last().map(|p| p.bean_temp),
             preheat_temp: None,
-            charge_temp: parsed.events.iter()
+            charge_temp: parsed
+                .events
+                .iter()
                 .find(|e| e.event_type == "CHARGE")
                 .map(|e| e.bean_temp),
             points,
@@ -538,7 +576,7 @@ impl RoastSessionService {
             WHERE device_id = ? AND status IN (?, ?)
             ORDER BY start_time DESC
             LIMIT 1
-            "#
+            "#,
         )
         .bind(device_id)
         .bind(SessionStatus::Active.to_string())
@@ -550,7 +588,11 @@ impl RoastSessionService {
     }
 
     // Roast Events CRUD operations
-    pub async fn create_roast_event(&self, session_id: &str, req: CreateRoastEventRequest) -> Result<RoastEvent> {
+    pub async fn create_roast_event(
+        &self,
+        session_id: &str,
+        req: CreateRoastEventRequest,
+    ) -> Result<RoastEvent> {
         let event_id = Uuid::new_v4().to_string();
         let now = Utc::now();
 
@@ -576,7 +618,7 @@ impl RoastSessionService {
 
     pub async fn get_roast_events(&self, session_id: &str) -> Result<Vec<RoastEvent>> {
         let events = sqlx::query_as::<_, RoastEvent>(
-            "SELECT * FROM roast_events WHERE session_id = ?1 ORDER BY elapsed_seconds ASC"
+            "SELECT * FROM roast_events WHERE session_id = ?1 ORDER BY elapsed_seconds ASC",
         )
         .bind(session_id)
         .fetch_all(&self.db)
@@ -585,7 +627,11 @@ impl RoastSessionService {
         Ok(events)
     }
 
-    pub async fn update_roast_event(&self, event_id: &str, req: UpdateRoastEventRequest) -> Result<RoastEvent> {
+    pub async fn update_roast_event(
+        &self,
+        event_id: &str,
+        req: UpdateRoastEventRequest,
+    ) -> Result<RoastEvent> {
         let mut updates = Vec::new();
 
         if req.elapsed_seconds.is_some() {
@@ -694,7 +740,7 @@ fn parse_artisan_alog(content: &str) -> Result<ParsedArtisanProfile> {
             .filter(|line| !line.trim_start().starts_with('#'))
             .collect::<Vec<_>>()
             .join("\n");
-        
+
         serde_json::from_str(&json_content)
             .map_err(|e| anyhow!("Unable to parse Artisan profile file format: {}", e))?
     };
@@ -704,7 +750,9 @@ fn parse_artisan_alog(content: &str) -> Result<ParsedArtisanProfile> {
     let temp1 = profile_data["temp1"].as_array().unwrap_or(&vec![]).clone(); // Environment temp
     let temp2 = profile_data["temp2"].as_array().unwrap_or(&vec![]).clone(); // Bean temp
     let default_computed = serde_json::Map::new();
-    let computed = profile_data["computed"].as_object().unwrap_or(&default_computed);
+    let computed = profile_data["computed"]
+        .as_object()
+        .unwrap_or(&default_computed);
 
     // Convert to profile points
     let mut points = Vec::new();
@@ -722,11 +770,11 @@ fn parse_artisan_alog(content: &str) -> Result<ParsedArtisanProfile> {
 
     // Extract roast events
     let mut events = Vec::new();
-    
+
     let event_types = vec![
         ("CHARGE", "CHARGE"),
         ("TP", "TP"),
-        ("DRY", "DRY"), 
+        ("DRY", "DRY"),
         ("FCs", "FCs"),
         ("FCe", "FCe"),
         ("SCs", "SCs"),
@@ -734,20 +782,30 @@ fn parse_artisan_alog(content: &str) -> Result<ParsedArtisanProfile> {
     ];
 
     for (key, event_type) in event_types {
-        if let Some(time) = computed.get(&format!("{}_time", key)).and_then(|t| t.as_f64()) {
-            let bean_temp = computed.get(&format!("{}_BT", key)).and_then(|t| t.as_f64()).unwrap_or(0.0) as f32;
-            let env_temp = computed.get(&format!("{}_ET", key)).and_then(|t| t.as_f64()).unwrap_or(0.0) as f32;
+        if let Some(time) = computed
+            .get(&format!("{}_time", key))
+            .and_then(|t| t.as_f64())
+        {
+            let bean_temp = computed
+                .get(&format!("{}_BT", key))
+                .and_then(|t| t.as_f64())
+                .unwrap_or(0.0) as f32;
+            let env_temp = computed
+                .get(&format!("{}_ET", key))
+                .and_then(|t| t.as_f64())
+                .unwrap_or(0.0) as f32;
             let name = match event_type {
                 "CHARGE" => "Charge",
                 "TP" => "Turning Point",
                 "DRY" => "Dry End",
                 "FCs" => "First Crack Start",
-                "FCe" => "First Crack End", 
+                "FCe" => "First Crack End",
                 "SCs" => "Second Crack Start",
                 "DROP" => "Drop",
                 _ => event_type,
-            }.to_string();
-            
+            }
+            .to_string();
+
             events.push(ArtisanRoastEvent {
                 name,
                 time,
@@ -758,9 +816,13 @@ fn parse_artisan_alog(content: &str) -> Result<ParsedArtisanProfile> {
         }
     }
 
-    let title = profile_data["title"].as_str().unwrap_or("Imported Profile").to_string();
+    let title = profile_data["title"]
+        .as_str()
+        .unwrap_or("Imported Profile")
+        .to_string();
     let roast_date = profile_data["roastdate"].as_str().unwrap_or("").to_string();
-    let total_time = computed.get("totaltime")
+    let total_time = computed
+        .get("totaltime")
         .and_then(|t| t.as_f64())
         .unwrap_or_else(|| timex.last().and_then(|t| t.as_f64()).unwrap_or(0.0));
 
@@ -792,64 +854,68 @@ impl DeviceService {
     pub async fn list_devices(&self, status_filter: Option<DeviceStatus>) -> Result<Vec<Device>> {
         if let Some(status) = status_filter {
             let devices = sqlx::query_as::<_, Device>(
-                "SELECT * FROM devices WHERE status = ? ORDER BY created_at DESC"
+                "SELECT * FROM devices WHERE status = ? ORDER BY created_at DESC",
             )
             .bind(status.to_string())
             .fetch_all(&self.db)
             .await?;
             Ok(devices)
         } else {
-            let devices = sqlx::query_as::<_, Device>(
-                "SELECT * FROM devices ORDER BY created_at DESC"
-            )
-            .fetch_all(&self.db)
-            .await?;
+            let devices =
+                sqlx::query_as::<_, Device>("SELECT * FROM devices ORDER BY created_at DESC")
+                    .fetch_all(&self.db)
+                    .await?;
             Ok(devices)
         }
     }
 
     pub async fn get_device(&self, id: &str) -> Result<Option<DeviceWithConnections>> {
-        let device = sqlx::query_as::<_, Device>(
-            "SELECT * FROM devices WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?;
+        let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.db)
+            .await?;
 
         let Some(device) = device else {
             return Ok(None);
         };
 
         let connections = sqlx::query_as::<_, DeviceConnection>(
-            "SELECT * FROM device_connections WHERE device_id = ? ORDER BY priority DESC"
+            "SELECT * FROM device_connections WHERE device_id = ? ORDER BY priority DESC",
         )
         .bind(id)
         .fetch_all(&self.db)
         .await?;
 
-        Ok(Some(DeviceWithConnections { device, connections }))
+        Ok(Some(DeviceWithConnections {
+            device,
+            connections,
+        }))
     }
 
-    pub async fn get_device_by_device_id(&self, device_id: &str) -> Result<Option<DeviceWithConnections>> {
-        let device = sqlx::query_as::<_, Device>(
-            "SELECT * FROM devices WHERE device_id = ?"
-        )
-        .bind(device_id)
-        .fetch_optional(&self.db)
-        .await?;
+    pub async fn get_device_by_device_id(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<DeviceWithConnections>> {
+        let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE device_id = ?")
+            .bind(device_id)
+            .fetch_optional(&self.db)
+            .await?;
 
         let Some(device) = device else {
             return Ok(None);
         };
 
         let connections = sqlx::query_as::<_, DeviceConnection>(
-            "SELECT * FROM device_connections WHERE device_id = ? ORDER BY priority DESC"
+            "SELECT * FROM device_connections WHERE device_id = ? ORDER BY priority DESC",
         )
         .bind(&device.id)
         .fetch_all(&self.db)
         .await?;
 
-        Ok(Some(DeviceWithConnections { device, connections }))
+        Ok(Some(DeviceWithConnections {
+            device,
+            connections,
+        }))
     }
 
     pub async fn create_device(&self, req: CreateDeviceRequest) -> Result<Device> {
@@ -878,16 +944,22 @@ impl DeviceService {
         Ok(device)
     }
 
-    pub async fn update_device(&self, id: &str, req: UpdateDeviceRequest) -> Result<Option<Device>> {
-        if req.name.is_none() && req.profile_id.is_none() && req.status.is_none()
-           && req.description.is_none() && req.location.is_none() {
+    pub async fn update_device(
+        &self,
+        id: &str,
+        req: UpdateDeviceRequest,
+    ) -> Result<Option<Device>> {
+        if req.name.is_none()
+            && req.profile_id.is_none()
+            && req.status.is_none()
+            && req.description.is_none()
+            && req.location.is_none()
+        {
             // Nothing to update, just return the existing device
-            let device = sqlx::query_as::<_, Device>(
-                "SELECT * FROM devices WHERE id = ?"
-            )
-            .bind(id)
-            .fetch_optional(&self.db)
-            .await?;
+            let device = sqlx::query_as::<_, Device>("SELECT * FROM devices WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.db)
+                .await?;
             return Ok(device);
         }
 
@@ -946,9 +1018,13 @@ impl DeviceService {
     }
 
     #[allow(dead_code)] // Will be used by device status transitions
-    pub async fn update_device_status(&self, id: &str, status: DeviceStatus) -> Result<Option<Device>> {
+    pub async fn update_device_status(
+        &self,
+        id: &str,
+        status: DeviceStatus,
+    ) -> Result<Option<Device>> {
         let device = sqlx::query_as::<_, Device>(
-            "UPDATE devices SET status = ?, updated_at = ? WHERE id = ? RETURNING *"
+            "UPDATE devices SET status = ?, updated_at = ? WHERE id = ? RETURNING *",
         )
         .bind(status.to_string())
         .bind(Utc::now())
@@ -960,13 +1036,11 @@ impl DeviceService {
     }
 
     pub async fn update_last_seen(&self, device_id: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE devices SET last_seen_at = ? WHERE device_id = ?"
-        )
-        .bind(Utc::now())
-        .bind(device_id)
-        .execute(&self.db)
-        .await?;
+        sqlx::query("UPDATE devices SET last_seen_at = ? WHERE device_id = ?")
+            .bind(Utc::now())
+            .bind(device_id)
+            .execute(&self.db)
+            .await?;
 
         Ok(())
     }
@@ -975,7 +1049,7 @@ impl DeviceService {
 
     pub async fn list_profiles(&self) -> Result<Vec<DeviceProfile>> {
         let profiles = sqlx::query_as::<_, DeviceProfile>(
-            "SELECT * FROM device_profiles ORDER BY created_at DESC"
+            "SELECT * FROM device_profiles ORDER BY created_at DESC",
         )
         .fetch_all(&self.db)
         .await?;
@@ -984,12 +1058,11 @@ impl DeviceService {
     }
 
     pub async fn get_profile(&self, id: &str) -> Result<Option<DeviceProfile>> {
-        let profile = sqlx::query_as::<_, DeviceProfile>(
-            "SELECT * FROM device_profiles WHERE id = ?"
-        )
-        .bind(id)
-        .fetch_optional(&self.db)
-        .await?;
+        let profile =
+            sqlx::query_as::<_, DeviceProfile>("SELECT * FROM device_profiles WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.db)
+                .await?;
 
         Ok(profile)
     }
@@ -1006,7 +1079,7 @@ impl DeviceService {
                 created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING *
-            "#
+            "#,
         )
         .bind(&id)
         .bind(&req.name)
@@ -1028,7 +1101,11 @@ impl DeviceService {
         Ok(profile)
     }
 
-    pub async fn update_profile(&self, id: &str, req: UpdateDeviceProfileRequest) -> Result<Option<DeviceProfile>> {
+    pub async fn update_profile(
+        &self,
+        id: &str,
+        req: UpdateDeviceProfileRequest,
+    ) -> Result<Option<DeviceProfile>> {
         let now = Utc::now();
         let profile = sqlx::query_as::<_, DeviceProfile>(
             r#"
@@ -1047,7 +1124,7 @@ impl DeviceService {
                 updated_at = ?
             WHERE id = ?
             RETURNING *
-            "#
+            "#,
         )
         .bind(&req.name)
         .bind(&req.description)
@@ -1079,7 +1156,11 @@ impl DeviceService {
 
     // ---- Device Connection CRUD ----
 
-    pub async fn add_connection(&self, device_id: &str, req: CreateConnectionRequest) -> Result<DeviceConnection> {
+    pub async fn add_connection(
+        &self,
+        device_id: &str,
+        req: CreateConnectionRequest,
+    ) -> Result<DeviceConnection> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
 
@@ -1104,10 +1185,14 @@ impl DeviceService {
         Ok(connection)
     }
 
-    pub async fn update_connection(&self, connection_id: &str, req: UpdateConnectionRequest) -> Result<Option<DeviceConnection>> {
+    pub async fn update_connection(
+        &self,
+        connection_id: &str,
+        req: UpdateConnectionRequest,
+    ) -> Result<Option<DeviceConnection>> {
         if req.enabled.is_none() && req.priority.is_none() && req.config.is_none() {
             let conn = sqlx::query_as::<_, DeviceConnection>(
-                "SELECT * FROM device_connections WHERE id = ?"
+                "SELECT * FROM device_connections WHERE id = ?",
             )
             .bind(connection_id)
             .fetch_optional(&self.db)
@@ -1170,7 +1255,11 @@ impl DeviceService {
         Ok(registers)
     }
 
-    pub async fn set_register_map(&self, device_id: &str, registers: Vec<CreateRegisterMapEntry>) -> Result<Vec<ModbusRegisterMap>> {
+    pub async fn set_register_map(
+        &self,
+        device_id: &str,
+        registers: Vec<CreateRegisterMapEntry>,
+    ) -> Result<Vec<ModbusRegisterMap>> {
         // Delete existing register map and insert new entries in a transaction
         let mut tx = self.db.begin().await?;
 
@@ -1189,7 +1278,7 @@ impl DeviceService {
                     byte_order, scale_factor, offset, unit, description, writable
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING *
-                "#
+                "#,
             )
             .bind(&id)
             .bind(device_id)
@@ -1264,7 +1353,10 @@ mod tests {
             location: Some("Kitchen".to_string()),
         };
 
-        let device = service.create_device(req).await.expect("create_device failed");
+        let device = service
+            .create_device(req)
+            .await
+            .expect("create_device failed");
         assert_eq!(device.name, "Test Roaster");
         assert_eq!(device.device_id, "esp32-001");
         assert_eq!(device.status, DeviceStatus::Pending);
@@ -1272,14 +1364,20 @@ mod tests {
         assert_eq!(device.location, Some("Kitchen".to_string()));
 
         // Get by id
-        let fetched = service.get_device(&device.id).await.expect("get_device failed");
+        let fetched = service
+            .get_device(&device.id)
+            .await
+            .expect("get_device failed");
         assert!(fetched.is_some());
         let fetched = fetched.unwrap();
         assert_eq!(fetched.device.name, "Test Roaster");
         assert!(fetched.connections.is_empty());
 
         // Get by device_id
-        let fetched = service.get_device_by_device_id("esp32-001").await.expect("get_device_by_device_id failed");
+        let fetched = service
+            .get_device_by_device_id("esp32-001")
+            .await
+            .expect("get_device_by_device_id failed");
         assert!(fetched.is_some());
         assert_eq!(fetched.unwrap().device.id, device.id);
     }
@@ -1290,36 +1388,51 @@ mod tests {
         let service = DeviceService::new(pool);
 
         // Create two devices
-        service.create_device(CreateDeviceRequest {
-            name: "Device 1".to_string(),
-            device_id: "d1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        service
+            .create_device(CreateDeviceRequest {
+                name: "Device 1".to_string(),
+                device_id: "d1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
-        let device2 = service.create_device(CreateDeviceRequest {
-            name: "Device 2".to_string(),
-            device_id: "d2".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device2 = service
+            .create_device(CreateDeviceRequest {
+                name: "Device 2".to_string(),
+                device_id: "d2".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
         // Activate device 2
-        service.update_device_status(&device2.id, DeviceStatus::Active).await.unwrap();
+        service
+            .update_device_status(&device2.id, DeviceStatus::Active)
+            .await
+            .unwrap();
 
         // List all
         let all = service.list_devices(None).await.unwrap();
         assert_eq!(all.len(), 2);
 
         // List only pending
-        let pending = service.list_devices(Some(DeviceStatus::Pending)).await.unwrap();
+        let pending = service
+            .list_devices(Some(DeviceStatus::Pending))
+            .await
+            .unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].device_id, "d1");
 
         // List only active
-        let active = service.list_devices(Some(DeviceStatus::Active)).await.unwrap();
+        let active = service
+            .list_devices(Some(DeviceStatus::Active))
+            .await
+            .unwrap();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].device_id, "d2");
     }
@@ -1329,27 +1442,39 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Original".to_string(),
-            device_id: "dev1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Original".to_string(),
+                device_id: "dev1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
-        let updated = service.update_device(&device.id, UpdateDeviceRequest {
-            name: Some("Updated Name".to_string()),
-            profile_id: None,
-            status: Some(DeviceStatus::Active),
-            description: Some("Now with description".to_string()),
-            location: None,
-        }).await.unwrap();
+        let updated = service
+            .update_device(
+                &device.id,
+                UpdateDeviceRequest {
+                    name: Some("Updated Name".to_string()),
+                    profile_id: None,
+                    status: Some(DeviceStatus::Active),
+                    description: Some("Now with description".to_string()),
+                    location: None,
+                },
+            )
+            .await
+            .unwrap();
 
         assert!(updated.is_some());
         let updated = updated.unwrap();
         assert_eq!(updated.name, "Updated Name");
         assert_eq!(updated.status, DeviceStatus::Active);
-        assert_eq!(updated.description, Some("Now with description".to_string()));
+        assert_eq!(
+            updated.description,
+            Some("Now with description".to_string())
+        );
     }
 
     #[tokio::test]
@@ -1357,13 +1482,16 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "To Delete".to_string(),
-            device_id: "del1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "To Delete".to_string(),
+                device_id: "del1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
         assert!(service.delete_device(&device.id).await.unwrap());
         assert!(!service.delete_device(&device.id).await.unwrap()); // Already deleted
@@ -1377,13 +1505,16 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Seen Device".to_string(),
-            device_id: "seen1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Seen Device".to_string(),
+                device_id: "seen1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
         assert!(device.last_seen_at.is_none());
 
@@ -1400,19 +1531,22 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let profile = service.create_profile(CreateDeviceProfileRequest {
-            name: "Default Profile".to_string(),
-            description: Some("Standard roasting config".to_string()),
-            default_control_mode: Some("auto".to_string()),
-            default_setpoint: Some(200.0),
-            default_fan_pwm: Some(180),
-            default_kp: Some(15.0),
-            default_ki: Some(1.0),
-            default_kd: Some(25.0),
-            max_temp: Some(240.0),
-            min_fan_pwm: Some(100),
-            telemetry_interval_ms: Some(1000),
-        }).await.unwrap();
+        let profile = service
+            .create_profile(CreateDeviceProfileRequest {
+                name: "Default Profile".to_string(),
+                description: Some("Standard roasting config".to_string()),
+                default_control_mode: Some("auto".to_string()),
+                default_setpoint: Some(200.0),
+                default_fan_pwm: Some(180),
+                default_kp: Some(15.0),
+                default_ki: Some(1.0),
+                default_kd: Some(25.0),
+                max_temp: Some(240.0),
+                min_fan_pwm: Some(100),
+                telemetry_interval_ms: Some(1000),
+            })
+            .await
+            .unwrap();
 
         assert_eq!(profile.name, "Default Profile");
         assert_eq!(profile.default_setpoint, Some(200.0));
@@ -1430,19 +1564,22 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let profile = service.create_profile(CreateDeviceProfileRequest {
-            name: "Temp Profile".to_string(),
-            description: None,
-            default_control_mode: None,
-            default_setpoint: None,
-            default_fan_pwm: None,
-            default_kp: None,
-            default_ki: None,
-            default_kd: None,
-            max_temp: None,
-            min_fan_pwm: None,
-            telemetry_interval_ms: None,
-        }).await.unwrap();
+        let profile = service
+            .create_profile(CreateDeviceProfileRequest {
+                name: "Temp Profile".to_string(),
+                description: None,
+                default_control_mode: None,
+                default_setpoint: None,
+                default_fan_pwm: None,
+                default_kp: None,
+                default_ki: None,
+                default_kd: None,
+                max_temp: None,
+                min_fan_pwm: None,
+                telemetry_interval_ms: None,
+            })
+            .await
+            .unwrap();
 
         assert!(service.delete_profile(&profile.id).await.unwrap());
         assert!(!service.delete_profile(&profile.id).await.unwrap());
@@ -1453,27 +1590,33 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let profile = service.create_profile(CreateDeviceProfileRequest {
-            name: "Roast Profile".to_string(),
-            description: None,
-            default_control_mode: None,
-            default_setpoint: Some(200.0),
-            default_fan_pwm: None,
-            default_kp: None,
-            default_ki: None,
-            default_kd: None,
-            max_temp: None,
-            min_fan_pwm: None,
-            telemetry_interval_ms: None,
-        }).await.unwrap();
+        let profile = service
+            .create_profile(CreateDeviceProfileRequest {
+                name: "Roast Profile".to_string(),
+                description: None,
+                default_control_mode: None,
+                default_setpoint: Some(200.0),
+                default_fan_pwm: None,
+                default_kp: None,
+                default_ki: None,
+                default_kd: None,
+                max_temp: None,
+                min_fan_pwm: None,
+                telemetry_interval_ms: None,
+            })
+            .await
+            .unwrap();
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Profiled Device".to_string(),
-            device_id: "prof1".to_string(),
-            profile_id: Some(profile.id.clone()),
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Profiled Device".to_string(),
+                device_id: "prof1".to_string(),
+                profile_id: Some(profile.id.clone()),
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
         assert_eq!(device.profile_id, Some(profile.id));
     }
@@ -1485,25 +1628,34 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Connected Device".to_string(),
-            device_id: "conn1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Connected Device".to_string(),
+                device_id: "conn1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
         let mqtt_config = serde_json::json!({
             "topic_prefix": "roaster/conn1",
             "qos": 1
         });
 
-        let conn = service.add_connection(&device.id, CreateConnectionRequest {
-            protocol: Protocol::Mqtt,
-            enabled: Some(true),
-            priority: Some(10),
-            config: mqtt_config.clone(),
-        }).await.unwrap();
+        let conn = service
+            .add_connection(
+                &device.id,
+                CreateConnectionRequest {
+                    protocol: Protocol::Mqtt,
+                    enabled: Some(true),
+                    priority: Some(10),
+                    config: mqtt_config.clone(),
+                },
+            )
+            .await
+            .unwrap();
 
         assert_eq!(conn.protocol, Protocol::Mqtt);
         assert!(conn.enabled);
@@ -1527,13 +1679,16 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Update Conn Device".to_string(),
-            device_id: "uconn1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Update Conn Device".to_string(),
+                device_id: "uconn1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
         let conn = service.add_connection(&device.id, CreateConnectionRequest {
             protocol: Protocol::WebSocket,
@@ -1542,11 +1697,17 @@ mod tests {
             config: serde_json::json!({"url": "ws://10.0.0.1:8080/ws", "reconnect_interval_ms": 5000}),
         }).await.unwrap();
 
-        let updated = service.update_connection(&conn.id, UpdateConnectionRequest {
-            enabled: Some(false),
-            priority: Some(5),
-            config: None,
-        }).await.unwrap();
+        let updated = service
+            .update_connection(
+                &conn.id,
+                UpdateConnectionRequest {
+                    enabled: Some(false),
+                    priority: Some(5),
+                    config: None,
+                },
+            )
+            .await
+            .unwrap();
 
         assert!(updated.is_some());
         let updated = updated.unwrap();
@@ -1559,20 +1720,29 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Cascade Device".to_string(),
-            device_id: "casc1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Cascade Device".to_string(),
+                device_id: "casc1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
-        service.add_connection(&device.id, CreateConnectionRequest {
-            protocol: Protocol::Mqtt,
-            enabled: None,
-            priority: None,
-            config: serde_json::json!({"topic_prefix": "roaster/casc1", "qos": 0}),
-        }).await.unwrap();
+        service
+            .add_connection(
+                &device.id,
+                CreateConnectionRequest {
+                    protocol: Protocol::Mqtt,
+                    enabled: None,
+                    priority: None,
+                    config: serde_json::json!({"topic_prefix": "roaster/casc1", "qos": 0}),
+                },
+            )
+            .await
+            .unwrap();
 
         service.add_connection(&device.id, CreateConnectionRequest {
             protocol: Protocol::ModbusTcp,
@@ -1596,13 +1766,16 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Modbus Device".to_string(),
-            device_id: "modbus1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Modbus Device".to_string(),
+                device_id: "modbus1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
         let registers = vec![
             CreateRegisterMapEntry {
@@ -1631,7 +1804,10 @@ mod tests {
             },
         ];
 
-        let result = service.set_register_map(&device.id, registers).await.unwrap();
+        let result = service
+            .set_register_map(&device.id, registers)
+            .await
+            .unwrap();
         assert_eq!(result.len(), 2);
 
         let fetched = service.get_register_map(&device.id).await.unwrap();
@@ -1646,57 +1822,70 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Replace Map Device".to_string(),
-            device_id: "rmap1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Replace Map Device".to_string(),
+                device_id: "rmap1".to_string(),
+                profile_id: None,
+                description: None,
+                location: None,
+            })
+            .await
+            .unwrap();
 
         // Set initial map
-        service.set_register_map(&device.id, vec![
-            CreateRegisterMapEntry {
-                register_type: ModbusRegisterType::Input,
-                address: 0,
-                name: "old_register".to_string(),
-                data_type: ModbusDataType::Uint16,
-                byte_order: None,
-                scale_factor: None,
-                offset: None,
-                unit: None,
-                description: None,
-                writable: None,
-            },
-        ]).await.unwrap();
+        service
+            .set_register_map(
+                &device.id,
+                vec![CreateRegisterMapEntry {
+                    register_type: ModbusRegisterType::Input,
+                    address: 0,
+                    name: "old_register".to_string(),
+                    data_type: ModbusDataType::Uint16,
+                    byte_order: None,
+                    scale_factor: None,
+                    offset: None,
+                    unit: None,
+                    description: None,
+                    writable: None,
+                }],
+            )
+            .await
+            .unwrap();
 
         // Replace with new map
-        service.set_register_map(&device.id, vec![
-            CreateRegisterMapEntry {
-                register_type: ModbusRegisterType::Holding,
-                address: 0,
-                name: "new_register_1".to_string(),
-                data_type: ModbusDataType::Float32,
-                byte_order: None,
-                scale_factor: None,
-                offset: None,
-                unit: None,
-                description: None,
-                writable: None,
-            },
-            CreateRegisterMapEntry {
-                register_type: ModbusRegisterType::Holding,
-                address: 2,
-                name: "new_register_2".to_string(),
-                data_type: ModbusDataType::Uint16,
-                byte_order: None,
-                scale_factor: None,
-                offset: None,
-                unit: None,
-                description: None,
-                writable: None,
-            },
-        ]).await.unwrap();
+        service
+            .set_register_map(
+                &device.id,
+                vec![
+                    CreateRegisterMapEntry {
+                        register_type: ModbusRegisterType::Holding,
+                        address: 0,
+                        name: "new_register_1".to_string(),
+                        data_type: ModbusDataType::Float32,
+                        byte_order: None,
+                        scale_factor: None,
+                        offset: None,
+                        unit: None,
+                        description: None,
+                        writable: None,
+                    },
+                    CreateRegisterMapEntry {
+                        register_type: ModbusRegisterType::Holding,
+                        address: 2,
+                        name: "new_register_2".to_string(),
+                        data_type: ModbusDataType::Uint16,
+                        byte_order: None,
+                        scale_factor: None,
+                        offset: None,
+                        unit: None,
+                        description: None,
+                        writable: None,
+                    },
+                ],
+            )
+            .await
+            .unwrap();
 
         let fetched = service.get_register_map(&device.id).await.unwrap();
         assert_eq!(fetched.len(), 2);
@@ -1711,28 +1900,35 @@ mod tests {
         let pool = setup_test_db().await;
         let service = DeviceService::new(pool);
 
-        let device = service.create_device(CreateDeviceRequest {
-            name: "Cascade Reg Device".to_string(),
-            device_id: "creg1".to_string(),
-            profile_id: None,
-            description: None,
-            location: None,
-        }).await.unwrap();
-
-        service.set_register_map(&device.id, vec![
-            CreateRegisterMapEntry {
-                register_type: ModbusRegisterType::Input,
-                address: 0,
-                name: "temp".to_string(),
-                data_type: ModbusDataType::Float32,
-                byte_order: None,
-                scale_factor: None,
-                offset: None,
-                unit: None,
+        let device = service
+            .create_device(CreateDeviceRequest {
+                name: "Cascade Reg Device".to_string(),
+                device_id: "creg1".to_string(),
+                profile_id: None,
                 description: None,
-                writable: None,
-            },
-        ]).await.unwrap();
+                location: None,
+            })
+            .await
+            .unwrap();
+
+        service
+            .set_register_map(
+                &device.id,
+                vec![CreateRegisterMapEntry {
+                    register_type: ModbusRegisterType::Input,
+                    address: 0,
+                    name: "temp".to_string(),
+                    data_type: ModbusDataType::Float32,
+                    byte_order: None,
+                    scale_factor: None,
+                    offset: None,
+                    unit: None,
+                    description: None,
+                    writable: None,
+                }],
+            )
+            .await
+            .unwrap();
 
         // Delete device should cascade delete register maps
         service.delete_device(&device.id).await.unwrap();
@@ -1750,42 +1946,79 @@ mod tests {
         let service = RoastSessionService::new(pool);
 
         // Create a profile with initial points
-        let created = service.create_profile(CreateProfileRequest {
-            name: "Original Profile".to_string(),
-            description: Some("Initial description".to_string()),
-            target_total_time: Some(600),
-            target_first_crack: None,
-            target_end_temp: Some(210.0),
-            preheat_temp: None,
-            charge_temp: Some(180.0),
-            points: vec![
-                CreateProfilePointRequest { time_seconds: 0, target_temp: 180.0, fan_speed: Some(80), notes: None },
-                CreateProfilePointRequest { time_seconds: 300, target_temp: 200.0, fan_speed: None, notes: None },
-            ],
-        }).await.unwrap();
+        let created = service
+            .create_profile(CreateProfileRequest {
+                name: "Original Profile".to_string(),
+                description: Some("Initial description".to_string()),
+                target_total_time: Some(600),
+                target_first_crack: None,
+                target_end_temp: Some(210.0),
+                preheat_temp: None,
+                charge_temp: Some(180.0),
+                points: vec![
+                    CreateProfilePointRequest {
+                        time_seconds: 0,
+                        target_temp: 180.0,
+                        fan_speed: Some(80),
+                        notes: None,
+                    },
+                    CreateProfilePointRequest {
+                        time_seconds: 300,
+                        target_temp: 200.0,
+                        fan_speed: None,
+                        notes: None,
+                    },
+                ],
+            })
+            .await
+            .unwrap();
 
         assert_eq!(created.profile.name, "Original Profile");
         assert_eq!(created.points.len(), 2);
 
         // Update the profile with new metadata and different points
-        let updated = service.update_profile(&created.profile.id, CreateProfileRequest {
-            name: "Updated Profile".to_string(),
-            description: Some("Updated description".to_string()),
-            target_total_time: Some(720),
-            target_first_crack: Some(360),
-            target_end_temp: Some(220.0),
-            preheat_temp: None,
-            charge_temp: Some(185.0),
-            points: vec![
-                CreateProfilePointRequest { time_seconds: 0, target_temp: 185.0, fan_speed: Some(90), notes: None },
-                CreateProfilePointRequest { time_seconds: 200, target_temp: 195.0, fan_speed: None, notes: None },
-                CreateProfilePointRequest { time_seconds: 500, target_temp: 220.0, fan_speed: Some(60), notes: Some("Finish".to_string()) },
-            ],
-        }).await.unwrap();
+        let updated = service
+            .update_profile(
+                &created.profile.id,
+                CreateProfileRequest {
+                    name: "Updated Profile".to_string(),
+                    description: Some("Updated description".to_string()),
+                    target_total_time: Some(720),
+                    target_first_crack: Some(360),
+                    target_end_temp: Some(220.0),
+                    preheat_temp: None,
+                    charge_temp: Some(185.0),
+                    points: vec![
+                        CreateProfilePointRequest {
+                            time_seconds: 0,
+                            target_temp: 185.0,
+                            fan_speed: Some(90),
+                            notes: None,
+                        },
+                        CreateProfilePointRequest {
+                            time_seconds: 200,
+                            target_temp: 195.0,
+                            fan_speed: None,
+                            notes: None,
+                        },
+                        CreateProfilePointRequest {
+                            time_seconds: 500,
+                            target_temp: 220.0,
+                            fan_speed: Some(60),
+                            notes: Some("Finish".to_string()),
+                        },
+                    ],
+                },
+            )
+            .await
+            .unwrap();
 
         let updated = updated.expect("Profile should exist");
         assert_eq!(updated.profile.name, "Updated Profile");
-        assert_eq!(updated.profile.description, Some("Updated description".to_string()));
+        assert_eq!(
+            updated.profile.description,
+            Some("Updated description".to_string())
+        );
         assert_eq!(updated.profile.target_total_time, Some(720));
         assert_eq!(updated.profile.target_first_crack, Some(360));
         assert_eq!(updated.profile.charge_temp, Some(185.0));
@@ -1794,20 +2027,30 @@ mod tests {
         assert_eq!(updated.points[2].notes, Some("Finish".to_string()));
 
         // Verify old points were replaced (not accumulated)
-        let fetched = service.get_profile_with_points(&created.profile.id).await.unwrap().unwrap();
+        let fetched = service
+            .get_profile_with_points(&created.profile.id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(fetched.points.len(), 3);
 
         // Update non-existent profile returns None
-        let missing = service.update_profile("nonexistent-id", CreateProfileRequest {
-            name: "Ghost".to_string(),
-            description: None,
-            target_total_time: None,
-            target_first_crack: None,
-            target_end_temp: None,
-            preheat_temp: None,
-            charge_temp: None,
-            points: vec![],
-        }).await.unwrap();
+        let missing = service
+            .update_profile(
+                "nonexistent-id",
+                CreateProfileRequest {
+                    name: "Ghost".to_string(),
+                    description: None,
+                    target_total_time: None,
+                    target_first_crack: None,
+                    target_end_temp: None,
+                    preheat_temp: None,
+                    charge_temp: None,
+                    points: vec![],
+                },
+            )
+            .await
+            .unwrap();
 
         assert!(missing.is_none());
     }

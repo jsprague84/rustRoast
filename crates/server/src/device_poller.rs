@@ -24,7 +24,10 @@ pub async fn start_device_pollers(
     device_service: DeviceService,
     telemetry_service: TelemetryService,
 ) {
-    let devices = match device_service.list_devices(Some(DeviceStatus::Active)).await {
+    let devices = match device_service
+        .list_devices(Some(DeviceStatus::Active))
+        .await
+    {
         Ok(d) => d,
         Err(e) => {
             tracing::error!(error = %e, "Failed to list devices for poller startup");
@@ -170,14 +173,18 @@ async fn poll_modbus_registers(
             .map(|r| {
                 r.address as u16
                     + match r.data_type {
-                        ModbusDataType::Float32 | ModbusDataType::Uint32 | ModbusDataType::Int32 => 2,
+                        ModbusDataType::Float32
+                        | ModbusDataType::Uint32
+                        | ModbusDataType::Int32 => 2,
                         _ => 1,
                     }
             })
             .max()
             .unwrap_or(0);
 
-        let data = ctx.read_input_registers(0, max_addr).await?
+        let data = ctx
+            .read_input_registers(0, max_addr)
+            .await?
             .map_err(|e| format!("Modbus exception: {:?}", e))?;
         decode_registers(&input_regs, &data, &mut payload);
     }
@@ -189,14 +196,18 @@ async fn poll_modbus_registers(
             .map(|r| {
                 r.address as u16
                     + match r.data_type {
-                        ModbusDataType::Float32 | ModbusDataType::Uint32 | ModbusDataType::Int32 => 2,
+                        ModbusDataType::Float32
+                        | ModbusDataType::Uint32
+                        | ModbusDataType::Int32 => 2,
                         _ => 1,
                     }
             })
             .max()
             .unwrap_or(0);
 
-        let data = ctx.read_holding_registers(0, max_addr).await?
+        let data = ctx
+            .read_holding_registers(0, max_addr)
+            .await?
             .map_err(|e| format!("Modbus exception: {:?}", e))?;
         decode_registers(&holding_regs, &data, &mut payload);
     }
@@ -313,34 +324,74 @@ fn default_register_map() -> Vec<ModbusRegisterMap> {
 
     vec![
         ModbusRegisterMap {
-            id: id.clone(), device_id: device_id.clone(),
-            register_type: Input, address: 0, name: "beanTemp".into(),
-            data_type: Float32, byte_order: None, scale_factor: None,
-            offset: None, unit: Some("°C".into()), description: None, writable: false,
+            id: id.clone(),
+            device_id: device_id.clone(),
+            register_type: Input,
+            address: 0,
+            name: "beanTemp".into(),
+            data_type: Float32,
+            byte_order: None,
+            scale_factor: None,
+            offset: None,
+            unit: Some("°C".into()),
+            description: None,
+            writable: false,
         },
         ModbusRegisterMap {
-            id: id.clone(), device_id: device_id.clone(),
-            register_type: Input, address: 2, name: "envTemp".into(),
-            data_type: Float32, byte_order: None, scale_factor: None,
-            offset: None, unit: Some("°C".into()), description: None, writable: false,
+            id: id.clone(),
+            device_id: device_id.clone(),
+            register_type: Input,
+            address: 2,
+            name: "envTemp".into(),
+            data_type: Float32,
+            byte_order: None,
+            scale_factor: None,
+            offset: None,
+            unit: Some("°C".into()),
+            description: None,
+            writable: false,
         },
         ModbusRegisterMap {
-            id: id.clone(), device_id: device_id.clone(),
-            register_type: Input, address: 4, name: "rateOfRise".into(),
-            data_type: Float32, byte_order: None, scale_factor: None,
-            offset: None, unit: Some("°C/min".into()), description: None, writable: false,
+            id: id.clone(),
+            device_id: device_id.clone(),
+            register_type: Input,
+            address: 4,
+            name: "rateOfRise".into(),
+            data_type: Float32,
+            byte_order: None,
+            scale_factor: None,
+            offset: None,
+            unit: Some("°C/min".into()),
+            description: None,
+            writable: false,
         },
         ModbusRegisterMap {
-            id: id.clone(), device_id: device_id.clone(),
-            register_type: Input, address: 6, name: "heaterPWM".into(),
-            data_type: Uint16, byte_order: None, scale_factor: None,
-            offset: None, unit: Some("%".into()), description: None, writable: false,
+            id: id.clone(),
+            device_id: device_id.clone(),
+            register_type: Input,
+            address: 6,
+            name: "heaterPWM".into(),
+            data_type: Uint16,
+            byte_order: None,
+            scale_factor: None,
+            offset: None,
+            unit: Some("%".into()),
+            description: None,
+            writable: false,
         },
         ModbusRegisterMap {
-            id: id.clone(), device_id: device_id.clone(),
-            register_type: Input, address: 7, name: "fanPWM".into(),
-            data_type: Uint16, byte_order: None, scale_factor: None,
-            offset: None, unit: None, description: None, writable: false,
+            id: id.clone(),
+            device_id: device_id.clone(),
+            register_type: Input,
+            address: 7,
+            name: "fanPWM".into(),
+            data_type: Uint16,
+            byte_order: None,
+            scale_factor: None,
+            offset: None,
+            unit: None,
+            description: None,
+            writable: false,
         },
     ]
 }

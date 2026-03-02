@@ -1,9 +1,12 @@
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
-use std::time::Duration;
 use std::collections::HashMap;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
 
 use rumqttc::{AsyncClient, ClientError, Event, EventLoop, Incoming, MqttOptions, Outgoing, QoS};
-use tokio::sync::{broadcast, RwLock, Mutex};
+use tokio::sync::{broadcast, Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
@@ -42,7 +45,15 @@ impl MqttService {
         let client_shared = Arc::new(Mutex::new(client));
         let client_clone = client_shared.clone();
         let loop_handle = tokio::spawn(async move {
-            run_eventloop(eventloop, client_clone, ready_clone, tx_clone, subscriptions_clone, config).await;
+            run_eventloop(
+                eventloop,
+                client_clone,
+                ready_clone,
+                tx_clone,
+                subscriptions_clone,
+                config,
+            )
+            .await;
         });
 
         Ok(Self {
@@ -62,7 +73,13 @@ impl MqttService {
         self.events_tx.subscribe()
     }
 
-    pub async fn publish<T: Into<Vec<u8>>>(&self, topic: &str, qos: QoS, retain: bool, payload: T) -> Result<(), ClientError> {
+    pub async fn publish<T: Into<Vec<u8>>>(
+        &self,
+        topic: &str,
+        qos: QoS,
+        retain: bool,
+        payload: T,
+    ) -> Result<(), ClientError> {
         let client = self.client.lock().await;
         client.publish(topic, qos, retain, payload).await
     }

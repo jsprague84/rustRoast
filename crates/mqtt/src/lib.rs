@@ -1,6 +1,5 @@
-pub mod config;
 pub mod client;
+pub mod config;
 
-pub use config::MqttConfig;
 pub use client::{MqttEvent, MqttService};
-
+pub use config::MqttConfig;

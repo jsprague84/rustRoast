@@ -11,4 +11,3 @@ pub enum Command {
     SetDrumSpeed(u8),   // 0..=100
     SetProfileId(String),
 }
-

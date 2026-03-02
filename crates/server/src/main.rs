@@ -1,40 +1,43 @@
 use std::net::SocketAddr;
 
-use axum::{routing::{get, post, put, delete}, Json, Router};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use rumqttc::QoS;
-use serde::{Deserialize, Serialize};
+use axum::{
+    routing::{delete, get, post, put},
+    Json, Router,
+};
 use dotenvy::dotenv;
+use prometheus::{Encoder, IntCounter, IntGauge, IntGaugeVec, TextEncoder};
+use rumqttc::QoS;
+use rustroast_core::{autotune_wildcard_all, status_wildcard_all, telemetry_wildcard_all};
 use rustroast_mqtt::{MqttConfig, MqttService};
-use rustroast_core::{telemetry_wildcard_all, status_wildcard_all, autotune_wildcard_all};
-use tokio::signal;
-use tracing::info;
-use tracing_subscriber::EnvFilter;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::signal;
 use tokio::sync::{broadcast, RwLock};
-use prometheus::{Encoder, IntCounter, IntGauge, IntGaugeVec, TextEncoder};
+use tracing::info;
+use tracing_subscriber::EnvFilter;
 // (Static docs in /docs for now; utoipa can be reintroduced later)
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use axum::extract::Query;
-use std::time::Duration;
 use axum::http::header::CONTENT_TYPE;
-use tower_http::services::{ServeDir, ServeFile};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::path::PathBuf;
+use std::time::Duration;
+use tower_http::services::{ServeDir, ServeFile};
 
 mod device_poller;
-mod models;
 mod modbus;
+mod models;
 mod routes;
 mod services;
 mod telemetry;
 
 use models::*;
 use routes::device_routes;
-use services::{RoastSessionService, DeviceService};
+use services::{DeviceService, RoastSessionService};
 use telemetry::TelemetryService;
 
 #[derive(Clone)]
@@ -58,16 +61,22 @@ pub(crate) struct AppState {
 struct DeviceInfo {
     device_id: String,
     last_seen: u64,
-    #[serde(skip_serializing_if = "Option::is_none")] id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")] ip: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")] version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")] rssi: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rssi: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     status_raw: Option<serde_json::Value>,
 }
 
 #[derive(Serialize)]
-struct DevicesResponse { devices: Vec<DeviceInfo> }
+struct DevicesResponse {
+    devices: Vec<DeviceInfo>,
+}
 
 struct Metrics {
     mqtt_connected: IntGauge,
@@ -80,18 +89,42 @@ struct Metrics {
 
 impl Metrics {
     fn new() -> Arc<Self> {
-        let mqtt_connected = IntGauge::new("rustroast_mqtt_connected", "MQTT connection status (1 connected, 0 otherwise)").unwrap();
-        let mqtt_rx_total = IntCounter::new("rustroast_mqtt_messages_received_total", "Total MQTT messages received").unwrap();
-        let mqtt_tx_total = IntCounter::new("rustroast_mqtt_messages_published_total", "Total MQTT messages published").unwrap();
-        let ws_clients = IntGauge::new("rustroast_ws_clients", "Number of connected WebSocket clients").unwrap();
+        let mqtt_connected = IntGauge::new(
+            "rustroast_mqtt_connected",
+            "MQTT connection status (1 connected, 0 otherwise)",
+        )
+        .unwrap();
+        let mqtt_rx_total = IntCounter::new(
+            "rustroast_mqtt_messages_received_total",
+            "Total MQTT messages received",
+        )
+        .unwrap();
+        let mqtt_tx_total = IntCounter::new(
+            "rustroast_mqtt_messages_published_total",
+            "Total MQTT messages published",
+        )
+        .unwrap();
+        let ws_clients = IntGauge::new(
+            "rustroast_ws_clients",
+            "Number of connected WebSocket clients",
+        )
+        .unwrap();
         let telemetry_last_seen = IntGaugeVec::new(
-            prometheus::Opts::new("rustroast_device_telemetry_last_seen", "Last seen telemetry epoch seconds"),
+            prometheus::Opts::new(
+                "rustroast_device_telemetry_last_seen",
+                "Last seen telemetry epoch seconds",
+            ),
             &["device_id"],
-        ).unwrap();
+        )
+        .unwrap();
         let status_last_seen = IntGaugeVec::new(
-            prometheus::Opts::new("rustroast_device_status_last_seen", "Last seen status epoch seconds"),
+            prometheus::Opts::new(
+                "rustroast_device_status_last_seen",
+                "Last seen status epoch seconds",
+            ),
             &["device_id"],
-        ).unwrap();
+        )
+        .unwrap();
 
         let registry = prometheus::default_registry();
         let _ = registry.register(Box::new(mqtt_connected.clone()));
@@ -101,7 +134,14 @@ impl Metrics {
         let _ = registry.register(Box::new(telemetry_last_seen.clone()));
         let _ = registry.register(Box::new(status_last_seen.clone()));
 
-        Arc::new(Self { mqtt_connected, mqtt_rx_total, mqtt_tx_total, ws_clients, telemetry_last_seen, status_last_seen })
+        Arc::new(Self {
+            mqtt_connected,
+            mqtt_rx_total,
+            mqtt_tx_total,
+            ws_clients,
+            telemetry_last_seen,
+            status_last_seen,
+        })
     }
 }
 
@@ -118,13 +158,22 @@ async fn main() {
         .expect("Failed to initialize MQTT");
 
     // Subscribe to telemetry/status/autotune wildcards to receive updates early
-    if let Err(e) = mqtt.subscribe(telemetry_wildcard_all(), rumqttc::QoS::AtMostOnce).await {
+    if let Err(e) = mqtt
+        .subscribe(telemetry_wildcard_all(), rumqttc::QoS::AtMostOnce)
+        .await
+    {
         tracing::warn!(?e, "Failed to subscribe to telemetry wildcard");
     }
-    if let Err(e) = mqtt.subscribe(status_wildcard_all(), rumqttc::QoS::AtMostOnce).await {
+    if let Err(e) = mqtt
+        .subscribe(status_wildcard_all(), rumqttc::QoS::AtMostOnce)
+        .await
+    {
         tracing::warn!(?e, "Failed to subscribe to status wildcard");
     }
-    if let Err(e) = mqtt.subscribe(autotune_wildcard_all(), rumqttc::QoS::AtMostOnce).await {
+    if let Err(e) = mqtt
+        .subscribe(autotune_wildcard_all(), rumqttc::QoS::AtMostOnce)
+        .await
+    {
         tracing::warn!(?e, "Failed to subscribe to autotune wildcard");
     }
     // Subscribe to all roaster topics for debug WebSocket
@@ -164,14 +213,21 @@ async fn main() {
     // Static frontend (SPA fallback)
     let server_crate_dir = env!("CARGO_MANIFEST_DIR");
     let default_app_dir = PathBuf::from(server_crate_dir).join("../../apps/dashboard/build");
-    let app_dir = std::env::var("RUSTROAST_APP_DIR").unwrap_or_else(|_| default_app_dir.to_string_lossy().to_string());
-    let spa_fallback = ServeDir::new(app_dir.clone())
-        .fallback(ServeFile::new(format!("{}/index.html", app_dir)));
+    let app_dir = std::env::var("RUSTROAST_APP_DIR")
+        .unwrap_or_else(|_| default_app_dir.to_string_lossy().to_string());
+    let spa_fallback =
+        ServeDir::new(app_dir.clone()).fallback(ServeFile::new(format!("{}/index.html", app_dir)));
 
     let app = Router::new()
         // Undo cached 301 from old /app/ mount point
-        .route("/app", get(|| async { axum::response::Redirect::temporary("/") }))
-        .route("/app/*rest", get(|| async { axum::response::Redirect::temporary("/") }))
+        .route(
+            "/app",
+            get(|| async { axum::response::Redirect::temporary("/") }),
+        )
+        .route(
+            "/app/*rest",
+            get(|| async { axum::response::Redirect::temporary("/") }),
+        )
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/version", get(version))
@@ -179,16 +235,30 @@ async fn main() {
         // Static OpenAPI
         .route("/api-docs/openapi.json", get(serve_openapi_json))
         .route("/docs", get(serve_swagger_ui_html))
-        
         // Swagger UI can be added here when OpenAPI spec is generated
         // Control API
-        .route("/api/roaster/:device_id/control/setpoint", post(api_set_setpoint))
-        .route("/api/roaster/:device_id/control/fan_pwm", post(api_set_fan_pwm))
-        .route("/api/roaster/:device_id/control/heater_pwm", post(api_set_heater_pwm))
+        .route(
+            "/api/roaster/:device_id/control/setpoint",
+            post(api_set_setpoint),
+        )
+        .route(
+            "/api/roaster/:device_id/control/fan_pwm",
+            post(api_set_fan_pwm),
+        )
+        .route(
+            "/api/roaster/:device_id/control/heater_pwm",
+            post(api_set_heater_pwm),
+        )
         .route("/api/roaster/:device_id/control/mode", post(api_set_mode))
-        .route("/api/roaster/:device_id/control/heater_enable", post(api_set_heater_enable))
+        .route(
+            "/api/roaster/:device_id/control/heater_enable",
+            post(api_set_heater_enable),
+        )
         .route("/api/roaster/:device_id/control/pid", post(api_set_pid))
-        .route("/api/roaster/:device_id/control/emergency_stop", post(api_emergency_stop))
+        .route(
+            "/api/roaster/:device_id/control/emergency_stop",
+            post(api_emergency_stop),
+        )
         // MQTT admin endpoint
         .route("/api/admin/mqtt/reset", post(api_mqtt_reset))
         // WebSocket endpoints
@@ -197,20 +267,53 @@ async fn main() {
         // Device-to-server WebSocket (DEV-017): devices push telemetry, receive control commands
         .route("/ws/device/:device_id/telemetry", get(ws_device_telemetry))
         // Test utility: emit a fake telemetry payload via MQTT to exercise WS
-        .route("/api/test/emit-telemetry/:device_id", post(api_test_emit_telemetry))
-        .route("/api/test/emit-status/:device_id", post(api_test_emit_status))
+        .route(
+            "/api/test/emit-telemetry/:device_id",
+            post(api_test_emit_telemetry),
+        )
+        .route(
+            "/api/test/emit-status/:device_id",
+            post(api_test_emit_status),
+        )
         // Read APIs
-        .route("/api/roaster/:device_id/telemetry/latest", get(api_get_latest_telemetry))
-        .route("/api/roaster/:device_id/telemetry", get(api_get_telemetry_history))
+        .route(
+            "/api/roaster/:device_id/telemetry/latest",
+            get(api_get_latest_telemetry),
+        )
+        .route(
+            "/api/roaster/:device_id/telemetry",
+            get(api_get_telemetry_history),
+        )
         .route("/api/devices/registry", get(api_get_devices))
         // Auto-tune APIs
-        .route("/api/roaster/:device_id/autotune/start", post(api_autotune_start))
-        .route("/api/roaster/:device_id/autotune/stop", post(api_autotune_stop))
-        .route("/api/roaster/:device_id/autotune/apply", post(api_autotune_apply))
-        .route("/api/roaster/:device_id/autotune/status/latest", get(api_get_autotune_status_latest))
-        .route("/api/roaster/:device_id/autotune/results/latest", get(api_get_autotune_results_latest))
-        .route("/api/roaster/:device_id/autotune/status", get(api_get_autotune_status_history))
-        .route("/api/roaster/:device_id/autotune/results", get(api_get_autotune_results_history))
+        .route(
+            "/api/roaster/:device_id/autotune/start",
+            post(api_autotune_start),
+        )
+        .route(
+            "/api/roaster/:device_id/autotune/stop",
+            post(api_autotune_stop),
+        )
+        .route(
+            "/api/roaster/:device_id/autotune/apply",
+            post(api_autotune_apply),
+        )
+        .route(
+            "/api/roaster/:device_id/autotune/status/latest",
+            get(api_get_autotune_status_latest),
+        )
+        .route(
+            "/api/roaster/:device_id/autotune/results/latest",
+            get(api_get_autotune_results_latest),
+        )
+        .route(
+            "/api/roaster/:device_id/autotune/status",
+            get(api_get_autotune_status_history),
+        )
+        .route(
+            "/api/roaster/:device_id/autotune/results",
+            get(api_get_autotune_results_history),
+        )
         // Roast Session Management API
         .route("/api/sessions", post(api_create_session))
         .route("/api/sessions", get(api_list_sessions))
@@ -221,20 +324,38 @@ async fn main() {
         .route("/api/sessions/:id/pause", post(api_pause_session))
         .route("/api/sessions/:id/resume", post(api_resume_session))
         .route("/api/sessions/:id/complete", post(api_complete_session))
-        .route("/api/sessions/:id/telemetry", get(api_get_session_telemetry))
+        .route(
+            "/api/sessions/:id/telemetry",
+            get(api_get_session_telemetry),
+        )
         .route("/api/sessions/:id/telemetry", post(api_add_telemetry_point))
         // Roast Events API
-        .route("/api/sessions/:session_id/events", get(api_get_roast_events))
-        .route("/api/sessions/:session_id/events", post(api_create_roast_event))
-        .route("/api/sessions/:session_id/events/:event_id", put(api_update_roast_event))
-        .route("/api/sessions/:session_id/events/:event_id", delete(api_delete_roast_event))
+        .route(
+            "/api/sessions/:session_id/events",
+            get(api_get_roast_events),
+        )
+        .route(
+            "/api/sessions/:session_id/events",
+            post(api_create_roast_event),
+        )
+        .route(
+            "/api/sessions/:session_id/events/:event_id",
+            put(api_update_roast_event),
+        )
+        .route(
+            "/api/sessions/:session_id/events/:event_id",
+            delete(api_delete_roast_event),
+        )
         // Roast Profile Management API
         .route("/api/profiles", post(api_create_profile))
         .route("/api/profiles", get(api_list_profiles))
         .route("/api/profiles/:id", get(api_get_profile))
         .route("/api/profiles/:id", put(api_update_profile))
         .route("/api/profiles/:id", delete(api_delete_profile))
-        .route("/api/profiles/import/artisan", post(api_import_artisan_profile))
+        .route(
+            "/api/profiles/import/artisan",
+            post(api_import_artisan_profile),
+        )
         // Settings API
         .route("/api/settings", get(api_get_settings))
         .route("/api/settings/:key", put(api_set_setting))
@@ -251,10 +372,7 @@ async fn main() {
     info!(%addr, "Starting HTTP server");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     // Modbus TCP server (disabled unless RUSTROAST_MODBUS_ADDR is set)
-    let _modbus_handle = modbus::start_modbus_server(
-        telemetry_cache.clone(),
-        mqtt.clone(),
-    ).await;
+    let _modbus_handle = modbus::start_modbus_server(telemetry_cache.clone(), mqtt.clone()).await;
     // Background consumer for MQTT events -> caches + metrics + persistence
     tokio::spawn(mqtt_consumer_loop(
         mqtt.clone(),
@@ -313,13 +431,22 @@ async fn shutdown_signal() {
     }
 }
 
-async fn healthz() -> &'static str { "ok" }
+async fn healthz() -> &'static str {
+    "ok"
+}
 
 async fn readyz(State(state): State<AppState>) -> axum::http::StatusCode {
     // MQTT must be ready and DB reachable
     let mqtt_ok = state.mqtt.is_ready();
-    let db_ok = sqlx::query_scalar::<_, i64>("SELECT 1").fetch_one(&state.db).await.is_ok();
-    if mqtt_ok && db_ok { axum::http::StatusCode::OK } else { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+    let db_ok = sqlx::query_scalar::<_, i64>("SELECT 1")
+        .fetch_one(&state.db)
+        .await
+        .is_ok();
+    if mqtt_ok && db_ok {
+        axum::http::StatusCode::OK
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    }
 }
 
 async fn version() -> Json<serde_json::Value> {
@@ -362,23 +489,40 @@ async fn serve_swagger_ui_html() -> Response {
 // ----- Control API payloads -----
 
 #[derive(Deserialize, Serialize)]
-struct SetpointPayload { value: f64 }
+struct SetpointPayload {
+    value: f64,
+}
 #[derive(Deserialize, Serialize)]
-struct FanPwmPayload { value: u16 }
+struct FanPwmPayload {
+    value: u16,
+}
 #[derive(Deserialize, Serialize)]
-struct HeaterPwmPayload { value: u8 }
+struct HeaterPwmPayload {
+    value: u8,
+}
 
 #[derive(Deserialize, Serialize)]
-struct ModePayload { mode: String }
+struct ModePayload {
+    mode: String,
+}
 
 #[derive(Deserialize, Serialize)]
-struct EnablePayload { enabled: bool }
+struct EnablePayload {
+    enabled: bool,
+}
 
 #[derive(Deserialize, Serialize)]
-struct PidPayload { kp: f64, ki: f64, kd: f64 }
+struct PidPayload {
+    kp: f64,
+    ki: f64,
+    kd: f64,
+}
 
 #[derive(Deserialize)]
-struct PublishOpts { wait_ack: Option<bool>, timeout_ms: Option<u64> }
+struct PublishOpts {
+    wait_ack: Option<bool>,
+    timeout_ms: Option<u64>,
+}
 
 #[derive(Serialize)]
 struct LatestTelemetryResponse {
@@ -403,55 +547,150 @@ struct TelemetryHistoryResponse {
 // ----- Control API handlers -----
 
 // OpenAPI annotations omitted in static docs mode
-async fn api_set_setpoint(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>, Json(body): Json<SetpointPayload>) -> impl IntoResponse {
+async fn api_set_setpoint(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+    Json(body): Json<SetpointPayload>,
+) -> impl IntoResponse {
     // Basic validation range 0..300 C
-    if !(0.0..=300.0).contains(&body.value) { return (StatusCode::BAD_REQUEST, "setpoint must be between 0 and 300 C").into_response(); }
+    if !(0.0..=300.0).contains(&body.value) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "setpoint must be between 0 and 300 C",
+        )
+            .into_response();
+    }
     let topic = rustroast_core::control_setpoint(&device_id);
     let payload = format!("{}", body.value);
-    publish_qos1_and_maybe_wait_ack(&state, &topic, payload, opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        payload,
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 // OpenAPI annotations omitted in static docs mode
-async fn api_set_fan_pwm(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>, Json(body): Json<FanPwmPayload>) -> impl IntoResponse {
-    if body.value > 255 { return (StatusCode::BAD_REQUEST, "fan_pwm must be 0..255").into_response(); }
+async fn api_set_fan_pwm(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+    Json(body): Json<FanPwmPayload>,
+) -> impl IntoResponse {
+    if body.value > 255 {
+        return (StatusCode::BAD_REQUEST, "fan_pwm must be 0..255").into_response();
+    }
     let topic = rustroast_core::control_fan_pwm(&device_id);
     let payload = body.value.to_string();
-    publish_qos1_and_maybe_wait_ack(&state, &topic, payload, opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        payload,
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 // OpenAPI annotations omitted in static docs mode
-async fn api_set_heater_pwm(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>, Json(body): Json<HeaterPwmPayload>) -> impl IntoResponse {
-    if body.value > 100 { return (StatusCode::BAD_REQUEST, "heater_pwm must be 0..100").into_response(); }
+async fn api_set_heater_pwm(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+    Json(body): Json<HeaterPwmPayload>,
+) -> impl IntoResponse {
+    if body.value > 100 {
+        return (StatusCode::BAD_REQUEST, "heater_pwm must be 0..100").into_response();
+    }
     let topic = rustroast_core::control_heater_pwm(&device_id);
     let payload = body.value.to_string();
-    publish_qos1_and_maybe_wait_ack(&state, &topic, payload, opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        payload,
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 // OpenAPI annotations omitted
-async fn api_set_mode(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>, Json(body): Json<ModePayload>) -> impl IntoResponse {
+async fn api_set_mode(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+    Json(body): Json<ModePayload>,
+) -> impl IntoResponse {
     let mode = body.mode.to_lowercase();
-    if mode != "auto" && mode != "manual" { return (StatusCode::BAD_REQUEST, "mode must be 'auto' or 'manual'").into_response(); }
+    if mode != "auto" && mode != "manual" {
+        return (StatusCode::BAD_REQUEST, "mode must be 'auto' or 'manual'").into_response();
+    }
     let topic = rustroast_core::control_mode(&device_id);
-    publish_qos1_and_maybe_wait_ack(&state, &topic, mode, opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        mode,
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 // OpenAPI annotations omitted
-async fn api_set_heater_enable(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>, Json(body): Json<EnablePayload>) -> impl IntoResponse {
+async fn api_set_heater_enable(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+    Json(body): Json<EnablePayload>,
+) -> impl IntoResponse {
     let topic = rustroast_core::control_heater_enable(&device_id);
     let payload = if body.enabled { "1" } else { "0" };
-    publish_qos1_and_maybe_wait_ack(&state, &topic, payload, opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        payload,
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 // OpenAPI annotations omitted in static docs mode
-async fn api_set_pid(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>, Json(body): Json<PidPayload>) -> impl IntoResponse {
+async fn api_set_pid(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+    Json(body): Json<PidPayload>,
+) -> impl IntoResponse {
     let topic = rustroast_core::control_pid(&device_id);
     let payload = serde_json::json!({"kp": body.kp, "ki": body.ki, "kd": body.kd}).to_string();
-    publish_qos1_and_maybe_wait_ack(&state, &topic, payload, opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        payload,
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
-async fn api_emergency_stop(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>) -> impl IntoResponse {
+async fn api_emergency_stop(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+) -> impl IntoResponse {
     let topic = rustroast_core::control_emergency_stop(&device_id);
-    publish_qos1_and_maybe_wait_ack(&state, &topic, "1", opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        "1",
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 async fn api_mqtt_reset(State(state): State<AppState>) -> impl IntoResponse {
@@ -462,15 +701,24 @@ async fn api_mqtt_reset(State(state): State<AppState>) -> impl IntoResponse {
     match state.mqtt.resubscribe_tracked().await {
         Ok(_) => {
             tracing::info!("MQTT subscriptions reestablished successfully");
-            (StatusCode::OK, "MQTT reset completed - subscriptions restored").into_response()
+            (
+                StatusCode::OK,
+                "MQTT reset completed - subscriptions restored",
+            )
+                .into_response()
         }
         Err(e) => {
-            tracing::warn!(?e, "Failed to reestablish MQTT subscriptions, attempting disconnect/reconnect");
+            tracing::warn!(
+                ?e,
+                "Failed to reestablish MQTT subscriptions, attempting disconnect/reconnect"
+            );
 
             // If resubscribe fails, then try the disconnect approach as fallback
             match state.mqtt.disconnect().await {
                 Ok(_) => {
-                    tracing::info!("MQTT disconnect successful - automatic reconnection will begin");
+                    tracing::info!(
+                        "MQTT disconnect successful - automatic reconnection will begin"
+                    );
                     // Give the MQTT client a moment to reconnect, then restore subscriptions
                     let state_clone = state.clone();
                     tokio::spawn(async move {
@@ -481,11 +729,23 @@ async fn api_mqtt_reset(State(state): State<AppState>) -> impl IntoResponse {
                             tracing::info!("MQTT subscriptions restored after reconnection");
                         }
                     });
-                    (StatusCode::OK, "MQTT reset initiated - reconnection will happen automatically").into_response()
+                    (
+                        StatusCode::OK,
+                        "MQTT reset initiated - reconnection will happen automatically",
+                    )
+                        .into_response()
                 }
                 Err(disconnect_err) => {
-                    tracing::error!(?e, ?disconnect_err, "Both resubscribe and disconnect failed");
-                    (StatusCode::INTERNAL_SERVER_ERROR, "Failed to reset MQTT connection").into_response()
+                    tracing::error!(
+                        ?e,
+                        ?disconnect_err,
+                        "Both resubscribe and disconnect failed"
+                    );
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to reset MQTT connection",
+                    )
+                        .into_response()
                 }
             }
         }
@@ -493,8 +753,15 @@ async fn api_mqtt_reset(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 async fn publish_ok(state: &AppState, topic: &str, payload: impl Into<Vec<u8>>) -> Response {
-    match state.mqtt.publish(topic, QoS::AtMostOnce, false, payload).await {
-        Ok(_) => { state.metrics.mqtt_tx_total.inc(); StatusCode::NO_CONTENT.into_response() },
+    match state
+        .mqtt
+        .publish(topic, QoS::AtMostOnce, false, payload)
+        .await
+    {
+        Ok(_) => {
+            state.metrics.mqtt_tx_total.inc();
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(e) => {
             tracing::warn!(?e, topic, "MQTT publish failed");
             (StatusCode::BAD_GATEWAY, "MQTT publish failed").into_response()
@@ -502,7 +769,13 @@ async fn publish_ok(state: &AppState, topic: &str, payload: impl Into<Vec<u8>>) 
     }
 }
 
-async fn publish_qos1_and_maybe_wait_ack(state: &AppState, topic: &str, payload: impl Into<Vec<u8>>, wait_ack: bool, timeout_ms: u64) -> Response {
+async fn publish_qos1_and_maybe_wait_ack(
+    state: &AppState,
+    topic: &str,
+    payload: impl Into<Vec<u8>>,
+    wait_ack: bool,
+    timeout_ms: u64,
+) -> Response {
     let payload_bytes: Vec<u8> = payload.into();
 
     // Check if this is a control command for a WebSocket-connected device (DEV-017)
@@ -514,7 +787,8 @@ async fn publish_qos1_and_maybe_wait_ack(state: &AppState, topic: &str, payload:
                 "type": "control",
                 "topic": topic,
                 "payload": payload_str,
-            }).to_string();
+            })
+            .to_string();
 
             if tx.send(ws_msg).is_ok() {
                 return StatusCode::NO_CONTENT.into_response();
@@ -525,13 +799,21 @@ async fn publish_qos1_and_maybe_wait_ack(state: &AppState, topic: &str, payload:
 
     // Subscribe to events before publish to reduce race window
     let mut rx = state.mqtt.events();
-    match state.mqtt.publish(topic, QoS::AtLeastOnce, false, payload_bytes).await {
+    match state
+        .mqtt
+        .publish(topic, QoS::AtLeastOnce, false, payload_bytes)
+        .await
+    {
         Ok(_) => {
             state.metrics.mqtt_tx_total.inc();
             if wait_ack {
-                if let Ok(Ok(evt)) = tokio::time::timeout(Duration::from_millis(timeout_ms), rx.recv()).await {
+                if let Ok(Ok(evt)) =
+                    tokio::time::timeout(Duration::from_millis(timeout_ms), rx.recv()).await
+                {
                     match evt {
-                        rustroast_mqtt::MqttEvent::PubAck(_) => StatusCode::NO_CONTENT.into_response(),
+                        rustroast_mqtt::MqttEvent::PubAck(_) => {
+                            StatusCode::NO_CONTENT.into_response()
+                        }
                         _ => StatusCode::NO_CONTENT.into_response(),
                     }
                 } else {
@@ -561,7 +843,10 @@ async fn ws_debug(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl I
 async fn telemetry_ws_loop(state: AppState, mut socket: WebSocket) {
     // Count WS client
     state.metrics.ws_clients.inc();
-    tracing::info!("WebSocket telemetry client connected, total: {}", state.metrics.ws_clients.get());
+    tracing::info!(
+        "WebSocket telemetry client connected, total: {}",
+        state.metrics.ws_clients.get()
+    );
 
     // Subscribe to unified telemetry broadcast (covers MQTT, device WS, Modbus)
     let mut telemetry_rx = state.telemetry_service.subscribe();
@@ -626,8 +911,8 @@ async fn telemetry_ws_loop(state: AppState, mut socket: WebSocket) {
 }
 
 async fn debug_ws_loop(state: AppState, mut socket: WebSocket) {
-    use tokio::select;
     use axum::extract::ws::Message;
+    use tokio::select;
 
     // Count WS client
     state.metrics.ws_clients.inc();
@@ -744,7 +1029,9 @@ fn parse_roaster_topic(topic: &str) -> Option<(String, String)> {
     // Expect: roaster/{device_id}/<kind>
     let mut parts = topic.split('/');
     let root = parts.next()?;
-    if root != rustroast_core::ROOT { return None; }
+    if root != rustroast_core::ROOT {
+        return None;
+    }
     let device = parts.next()?.to_string();
     let kind = parts.next()?.to_string();
     Some((device, kind))
@@ -779,7 +1066,10 @@ async fn mqtt_consumer_loop(
                     if kind == "telemetry" {
                         if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&payload) {
                             // Auto-discover: if device_id is not in the devices table, create it with status 'pending'
-                            let device_status = match device_service.get_device_by_device_id(&device_id).await {
+                            let device_status = match device_service
+                                .get_device_by_device_id(&device_id)
+                                .await
+                            {
                                 Ok(Some(dev)) => Some(dev.device.status),
                                 Ok(None) => {
                                     // Auto-create the device
@@ -803,7 +1093,10 @@ async fn mqtt_consumer_loop(
                                                 priority: Some(0),
                                                 config: mqtt_config,
                                             };
-                                            if let Err(e) = device_service.add_connection(&dev.id, conn_req).await {
+                                            if let Err(e) = device_service
+                                                .add_connection(&dev.id, conn_req)
+                                                .await
+                                            {
                                                 tracing::warn!(%device_id, error = %e, "Failed to add default MQTT connection for auto-discovered device");
                                             }
                                             tracing::info!(%device_id, "Auto-discovered new device via MQTT");
@@ -822,15 +1115,16 @@ async fn mqtt_consumer_loop(
                             };
 
                             // Shared telemetry processing (cache, persist, session recording, last-seen)
-                            telemetry_service.process_telemetry(
-                                &device_id,
-                                &val,
-                                device_status.as_ref(),
-                            ).await;
+                            telemetry_service
+                                .process_telemetry(&device_id, &val, device_status.as_ref())
+                                .await;
                         }
                     } else if kind == "status" {
                         if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&payload) {
-                            metrics.status_last_seen.with_label_values(&[&device_id]).set(now as i64);
+                            metrics
+                                .status_last_seen
+                                .with_label_values(&[&device_id])
+                                .set(now as i64);
                             let mut reg = device_registry.write().await;
                             let entry = reg.entry(device_id.clone()).or_insert(DeviceInfo {
                                 device_id: device_id.clone(),
@@ -843,9 +1137,18 @@ async fn mqtt_consumer_loop(
                             });
                             entry.last_seen = now;
                             entry.status_raw = Some(val.clone());
-                            entry.id = val.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                            entry.ip = val.get("ip").and_then(|v| v.as_str()).map(|s| s.to_string());
-                            entry.version = val.get("version").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            entry.id = val
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            entry.ip = val
+                                .get("ip")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            entry.version = val
+                                .get("version")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
                             entry.rssi = val.get("rssi").and_then(|v| v.as_i64());
                         }
                     } else if kind == "autotune" {
@@ -858,8 +1161,12 @@ async fn mqtt_consumer_loop(
                             if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&payload) {
                                 match sub {
                                     "status" => {
-                                        autotune_status_cache.write().await.insert(device_id.clone(), (val.clone(), now));
-                                        let payload_str = String::from_utf8_lossy(&payload).to_string();
+                                        autotune_status_cache
+                                            .write()
+                                            .await
+                                            .insert(device_id.clone(), (val.clone(), now));
+                                        let payload_str =
+                                            String::from_utf8_lossy(&payload).to_string();
                                         let _ = sqlx::query("INSERT INTO autotune_status (device_id, ts, payload) VALUES (?, ?, ?)")
                                             .bind(&device_id)
                                             .bind(now as i64)
@@ -868,8 +1175,12 @@ async fn mqtt_consumer_loop(
                                             .await;
                                     }
                                     "results" => {
-                                        autotune_results_cache.write().await.insert(device_id.clone(), (val.clone(), now));
-                                        let payload_str = String::from_utf8_lossy(&payload).to_string();
+                                        autotune_results_cache
+                                            .write()
+                                            .await
+                                            .insert(device_id.clone(), (val.clone(), now));
+                                        let payload_str =
+                                            String::from_utf8_lossy(&payload).to_string();
                                         let _ = sqlx::query("INSERT INTO autotune_results (device_id, ts, payload) VALUES (?, ?, ?)")
                                             .bind(&device_id)
                                             .bind(now as i64)
@@ -892,7 +1203,10 @@ async fn mqtt_consumer_loop(
 
 fn epoch_secs() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 // ----- Device WebSocket endpoint (DEV-017) -----
@@ -903,20 +1217,30 @@ async fn ws_device_telemetry(
     ws: WebSocketUpgrade,
 ) -> Response {
     // Validate device exists and is active
-    match state.device_service.get_device_by_device_id(&device_id).await {
+    match state
+        .device_service
+        .get_device_by_device_id(&device_id)
+        .await
+    {
         Ok(Some(dev)) => {
             if dev.device.status != DeviceStatus::Active {
                 return (
                     StatusCode::FORBIDDEN,
-                    format!("Device '{}' is not active (status: {})", device_id, dev.device.status),
-                ).into_response();
+                    format!(
+                        "Device '{}' is not active (status: {})",
+                        device_id, dev.device.status
+                    ),
+                )
+                    .into_response();
             }
             ws.on_upgrade(move |socket| device_ws_loop(state, device_id, socket))
                 .into_response()
         }
-        Ok(None) => {
-            (StatusCode::NOT_FOUND, format!("Device '{}' not found", device_id)).into_response()
-        }
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            format!("Device '{}' not found", device_id),
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!(%device_id, error = %e, "Failed to look up device for WebSocket");
             (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response()
@@ -929,7 +1253,11 @@ async fn device_ws_loop(state: AppState, device_id: String, mut socket: WebSocke
 
     // Create control command channel and register sender
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    state.device_ws_senders.write().await.insert(device_id.clone(), tx);
+    state
+        .device_ws_senders
+        .write()
+        .await
+        .insert(device_id.clone(), tx);
 
     loop {
         tokio::select! {
@@ -987,10 +1315,18 @@ async fn device_ws_loop(state: AppState, device_id: String, mut socket: WebSocke
 
 // ----- Read endpoints -----
 //#[utoipa::path(get, path = "/api/roaster/{device_id}/telemetry/latest", params(("device_id" = Path<String>)), responses((status = 200, body = LatestTelemetryResponse), (status = 404)))]
-async fn api_get_latest_telemetry(Path(device_id): Path<String>, State(state): State<AppState>) -> Response {
+async fn api_get_latest_telemetry(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
     let map = state.telemetry_cache.read().await;
     if let Some((val, ts)) = map.get(&device_id) {
-        Json(LatestTelemetryResponse { device_id, timestamp: *ts, telemetry: val.clone() }).into_response()
+        Json(LatestTelemetryResponse {
+            device_id,
+            timestamp: *ts,
+            telemetry: val.clone(),
+        })
+        .into_response()
     } else {
         (StatusCode::NOT_FOUND, "No telemetry").into_response()
     }
@@ -1006,61 +1342,117 @@ async fn api_get_devices(State(state): State<AppState>) -> Response {
 // ----- Auto-tune control & read endpoints -----
 
 #[derive(Deserialize)]
-struct AutoTuneStartPayload { target_temperature: f64 }
+struct AutoTuneStartPayload {
+    target_temperature: f64,
+}
 
 //#[utoipa::path(post, path = "/api/roaster/{device_id}/autotune/start", request_body = AutoTuneStartPayload,
 //    params(("device_id" = Path<String>), ("wait_ack" = Option<bool>, Query), ("timeout_ms" = Option<u64>, Query)),
 //    responses((status = 204), (status = 400), (status = 504))
 //)]
-async fn api_autotune_start(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>, Json(body): Json<AutoTuneStartPayload>) -> Response {
+async fn api_autotune_start(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+    Json(body): Json<AutoTuneStartPayload>,
+) -> Response {
     // ESP32 expects 150..=250 C according to firmware docs
     if !(150.0..=250.0).contains(&body.target_temperature) {
-        return (StatusCode::BAD_REQUEST, "target_temperature must be between 150 and 250 C").into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            "target_temperature must be between 150 and 250 C",
+        )
+            .into_response();
     }
     let topic = rustroast_core::autotune_start(&device_id);
     let payload = serde_json::json!({"target_temperature": body.target_temperature}).to_string();
-    publish_qos1_and_maybe_wait_ack(&state, &topic, payload, opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        payload,
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 //#[utoipa::path(post, path = "/api/roaster/{device_id}/autotune/stop",
 //    params(("device_id" = Path<String>), ("wait_ack" = Option<bool>, Query), ("timeout_ms" = Option<u64>, Query)),
 //    responses((status = 204), (status = 504))
 //)]
-async fn api_autotune_stop(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>) -> Response {
+async fn api_autotune_stop(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+) -> Response {
     let topic = rustroast_core::autotune_stop(&device_id);
-    publish_qos1_and_maybe_wait_ack(&state, &topic, "1", opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        "1",
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 //#[utoipa::path(post, path = "/api/roaster/{device_id}/autotune/apply",
 //    params(("device_id" = Path<String>), ("wait_ack" = Option<bool>, Query), ("timeout_ms" = Option<u64>, Query)),
 //    responses((status = 204), (status = 504))
 //)]
-async fn api_autotune_apply(Path(device_id): Path<String>, State(state): State<AppState>, Query(opts): Query<PublishOpts>) -> Response {
+async fn api_autotune_apply(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(opts): Query<PublishOpts>,
+) -> Response {
     let topic = rustroast_core::autotune_apply(&device_id);
-    publish_qos1_and_maybe_wait_ack(&state, &topic, "1", opts.wait_ack.unwrap_or(false), opts.timeout_ms.unwrap_or(1000)).await
+    publish_qos1_and_maybe_wait_ack(
+        &state,
+        &topic,
+        "1",
+        opts.wait_ack.unwrap_or(false),
+        opts.timeout_ms.unwrap_or(1000),
+    )
+    .await
 }
 
 //#[utoipa::path(get, path = "/api/roaster/{device_id}/autotune/status/latest", params(("device_id" = Path<String>)), responses((status = 200), (status = 404)))]
-async fn api_get_autotune_status_latest(Path(device_id): Path<String>, State(state): State<AppState>) -> Response {
+async fn api_get_autotune_status_latest(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
     let map = state.autotune_status_cache.read().await;
     match map.get(&device_id) {
-        Some((val, ts)) => Json(serde_json::json!({"device_id": device_id, "timestamp": ts, "status": val})).into_response(),
+        Some((val, ts)) => {
+            Json(serde_json::json!({"device_id": device_id, "timestamp": ts, "status": val}))
+                .into_response()
+        }
         None => Json(serde_json::json!(null)).into_response(),
     }
 }
 
 //#[utoipa::path(get, path = "/api/roaster/{device_id}/autotune/results/latest", params(("device_id" = Path<String>)), responses((status = 200)))]
-async fn api_get_autotune_results_latest(Path(device_id): Path<String>, State(state): State<AppState>) -> Response {
+async fn api_get_autotune_results_latest(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+) -> Response {
     let map = state.autotune_results_cache.read().await;
     match map.get(&device_id) {
-        Some((val, ts)) => Json(serde_json::json!({"device_id": device_id, "timestamp": ts, "results": val})).into_response(),
+        Some((val, ts)) => {
+            Json(serde_json::json!({"device_id": device_id, "timestamp": ts, "results": val}))
+                .into_response()
+        }
         None => Json(serde_json::json!(null)).into_response(),
     }
 }
 
 // Auto-tune history
 //#[utoipa::path(get, path = "/api/roaster/{device_id}/autotune/status", params(("device_id" = Path<String>), HistoryQuery), responses((status = 200)))]
-async fn api_get_autotune_status_history(Path(device_id): Path<String>, State(state): State<AppState>, Query(q): Query<HistoryQuery>) -> Response {
+async fn api_get_autotune_status_history(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(q): Query<HistoryQuery>,
+) -> Response {
     let now = epoch_secs();
     let since = q.since_secs.unwrap_or(3600);
     let limit = q.limit.unwrap_or(200).min(1000) as i64;
@@ -1079,14 +1471,19 @@ async fn api_get_autotune_status_history(Path(device_id): Path<String>, State(st
                     out.push(TelemetryItem { ts, telemetry: val });
                 }
             }
-            Json(serde_json::json!({"device_id": device_id, "count": out.len(), "items": out})).into_response()
+            Json(serde_json::json!({"device_id": device_id, "count": out.len(), "items": out}))
+                .into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "query failed").into_response(),
     }
 }
 
 //#[utoipa::path(get, path = "/api/roaster/{device_id}/autotune/results", params(("device_id" = Path<String>), HistoryQuery), responses((status = 200)))]
-async fn api_get_autotune_results_history(Path(device_id): Path<String>, State(state): State<AppState>, Query(q): Query<HistoryQuery>) -> Response {
+async fn api_get_autotune_results_history(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(q): Query<HistoryQuery>,
+) -> Response {
     let now = epoch_secs();
     let since = q.since_secs.unwrap_or(3600);
     let limit = q.limit.unwrap_or(200).min(1000) as i64;
@@ -1105,7 +1502,8 @@ async fn api_get_autotune_results_history(Path(device_id): Path<String>, State(s
                     out.push(TelemetryItem { ts, telemetry: val });
                 }
             }
-            Json(serde_json::json!({"device_id": device_id, "count": out.len(), "items": out})).into_response()
+            Json(serde_json::json!({"device_id": device_id, "count": out.len(), "items": out}))
+                .into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "query failed").into_response(),
     }
@@ -1113,10 +1511,17 @@ async fn api_get_autotune_results_history(Path(device_id): Path<String>, State(s
 
 // Query telemetry history
 #[derive(Deserialize)]
-struct HistoryQuery { since_secs: Option<u64>, limit: Option<u32> }
+struct HistoryQuery {
+    since_secs: Option<u64>,
+    limit: Option<u32>,
+}
 
 //#[utoipa::path(get, path = "/api/roaster/{device_id}/telemetry", params(("device_id" = Path<String>), HistoryQuery), responses((status = 200, body = TelemetryHistoryResponse)))]
-async fn api_get_telemetry_history(Path(device_id): Path<String>, State(state): State<AppState>, Query(q): Query<HistoryQuery>) -> Response {
+async fn api_get_telemetry_history(
+    Path(device_id): Path<String>,
+    State(state): State<AppState>,
+    Query(q): Query<HistoryQuery>,
+) -> Response {
     let now = epoch_secs();
     let since = q.since_secs.unwrap_or(3600); // default last hour
     let limit = q.limit.unwrap_or(200).min(1000) as i64; // cap limit
@@ -1135,7 +1540,12 @@ async fn api_get_telemetry_history(Path(device_id): Path<String>, State(state): 
                     out.push(TelemetryItem { ts, telemetry: val });
                 }
             }
-            Json(TelemetryHistoryResponse { device_id, count: out.len(), items: out }).into_response()
+            Json(TelemetryHistoryResponse {
+                device_id,
+                count: out.len(),
+                items: out,
+            })
+            .into_response()
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "query failed").into_response(),
     }
@@ -1143,31 +1553,48 @@ async fn api_get_telemetry_history(Path(device_id): Path<String>, State(state): 
 
 // ----- DB init and retention -----
 async fn init_db() -> Result<SqlitePool, sqlx::Error> {
-    let path = std::env::var("RUSTROAST_DB_PATH").unwrap_or_else(|_| "./data/rustroast.db".to_string());
+    let path =
+        std::env::var("RUSTROAST_DB_PATH").unwrap_or_else(|_| "./data/rustroast.db".to_string());
     // Ensure parent directory exists
-    if let Some(parent) = std::path::Path::new(&path).parent() { let _ = std::fs::create_dir_all(parent); }
+    if let Some(parent) = std::path::Path::new(&path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let url = format!("sqlite://{}?mode=rwc", path);
-    let pool = match SqlitePoolOptions::new().max_connections(5).connect(&url).await {
+    let pool = match SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect(&url)
+        .await
+    {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = ?e, "Failed to open SQLite at path; falling back to in-memory DB");
-            SqlitePoolOptions::new().max_connections(5).connect("sqlite::memory:").await?
+            SqlitePoolOptions::new()
+                .max_connections(5)
+                .connect("sqlite::memory:")
+                .await?
         }
     };
     // WAL for better concurrency
     let _ = sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await;
     // Enforce foreign key constraints
-    sqlx::query("PRAGMA foreign_keys = ON;").execute(&pool).await?;
+    sqlx::query("PRAGMA foreign_keys = ON;")
+        .execute(&pool)
+        .await?;
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS telemetry (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             device_id TEXT NOT NULL,
             ts INTEGER NOT NULL,
             payload TEXT NOT NULL
-        );"
-    ).execute(&pool).await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_telemetry_device_ts ON telemetry(device_id, ts DESC);")
-        .execute(&pool).await?;
+        );",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_device_ts ON telemetry(device_id, ts DESC);",
+    )
+    .execute(&pool)
+    .await?;
     // Auto-tune tables for status and results
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS autotune_status (
@@ -1175,8 +1602,10 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
             device_id TEXT NOT NULL,
             ts INTEGER NOT NULL,
             payload TEXT NOT NULL
-        );"
-    ).execute(&pool).await?;
+        );",
+    )
+    .execute(&pool)
+    .await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_autotune_status_device_ts ON autotune_status(device_id, ts DESC);")
         .execute(&pool).await?;
     sqlx::query(
@@ -1185,8 +1614,10 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
             device_id TEXT NOT NULL,
             ts INTEGER NOT NULL,
             payload TEXT NOT NULL
-        );"
-    ).execute(&pool).await?;
+        );",
+    )
+    .execute(&pool)
+    .await?;
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_autotune_results_device_ts ON autotune_results(device_id, ts DESC);")
         .execute(&pool).await?;
     // Settings key-value table
@@ -1195,11 +1626,15 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );"
-    ).execute(&pool).await?;
+        );",
+    )
+    .execute(&pool)
+    .await?;
     sqlx::query(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('profile_lookahead_seconds', '20');"
-    ).execute(&pool).await?;
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('profile_lookahead_seconds', '20');",
+    )
+    .execute(&pool)
+    .await?;
 
     // Run migrations
     let migrations: &[&str] = &[
@@ -1222,34 +1657,60 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
 }
 
 async fn retention_cleanup_loop(db: SqlitePool) {
-    let ttl = std::env::var("RUSTROAST_DB_RETENTION_SECS").ok().and_then(|s| s.parse::<u64>().ok()).unwrap_or(7*24*3600);
-    let interval = std::env::var("RUSTROAST_DB_CLEAN_INTERVAL_SECS").ok().and_then(|s| s.parse::<u64>().ok()).unwrap_or(300);
+    let ttl = std::env::var("RUSTROAST_DB_RETENTION_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(7 * 24 * 3600);
+    let interval = std::env::var("RUSTROAST_DB_CLEAN_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(300);
     let mut ticker = tokio::time::interval(Duration::from_secs(interval));
     loop {
         ticker.tick().await;
         let cutoff = (epoch_secs().saturating_sub(ttl)) as i64;
-        let _ = sqlx::query("DELETE FROM telemetry WHERE ts < ?").bind(cutoff).execute(&db).await;
+        let _ = sqlx::query("DELETE FROM telemetry WHERE ts < ?")
+            .bind(cutoff)
+            .execute(&db)
+            .await;
     }
 }
 
 // ----- Roast Session Management API Handlers -----
 
 // Session Management
-async fn api_create_session(State(state): State<AppState>, Json(req): Json<CreateSessionRequest>) -> Response {
+async fn api_create_session(
+    State(state): State<AppState>,
+    Json(req): Json<CreateSessionRequest>,
+) -> Response {
     match state.session_service.create_session(req).await {
         Ok(session) => Json(session).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to create session");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create session").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create session",
+            )
+                .into_response()
         }
     }
 }
 
 #[derive(Deserialize)]
-struct SessionListQuery { device_id: Option<String>, limit: Option<i32> }
+struct SessionListQuery {
+    device_id: Option<String>,
+    limit: Option<i32>,
+}
 
-async fn api_list_sessions(State(state): State<AppState>, Query(q): Query<SessionListQuery>) -> Response {
-    match state.session_service.list_sessions(q.device_id.as_deref(), q.limit).await {
+async fn api_list_sessions(
+    State(state): State<AppState>,
+    Query(q): Query<SessionListQuery>,
+) -> Response {
+    match state
+        .session_service
+        .list_sessions(q.device_id.as_deref(), q.limit)
+        .await
+    {
         Ok(sessions) => Json(sessions).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to list sessions");
@@ -1269,13 +1730,21 @@ async fn api_get_session(State(state): State<AppState>, Path(id): Path<String>) 
     }
 }
 
-async fn api_update_session(State(state): State<AppState>, Path(id): Path<String>, Json(req): Json<UpdateSessionRequest>) -> Response {
+async fn api_update_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateSessionRequest>,
+) -> Response {
     match state.session_service.update_session(&id, req).await {
         Ok(Some(session)) => Json(session).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Session not found").into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to update session");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update session").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update session",
+            )
+                .into_response()
         }
     }
 }
@@ -1286,7 +1755,11 @@ async fn api_delete_session(State(state): State<AppState>, Path(id): Path<String
         Ok(false) => (StatusCode::NOT_FOUND, "Session not found").into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to delete session");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete session").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to delete session",
+            )
+                .into_response()
         }
     }
 }
@@ -1294,7 +1767,11 @@ async fn api_delete_session(State(state): State<AppState>, Path(id): Path<String
 async fn api_start_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     match state.session_service.start_session(&id).await {
         Ok(Some(session)) => Json(session).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, "Session not found or not in planning state").into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            "Session not found or not in planning state",
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to start session");
             (StatusCode::INTERNAL_SERVER_ERROR, "Failed to start session").into_response()
@@ -1319,7 +1796,11 @@ async fn api_resume_session(State(state): State<AppState>, Path(id): Path<String
         Ok(None) => (StatusCode::NOT_FOUND, "Session not found or not paused").into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to resume session");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to resume session").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to resume session",
+            )
+                .into_response()
         }
     }
 }
@@ -1327,21 +1808,36 @@ async fn api_resume_session(State(state): State<AppState>, Path(id): Path<String
 async fn api_complete_session(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     match state.session_service.complete_session(&id).await {
         Ok(Some(session)) => Json(session).into_response(),
-        Ok(None) => (StatusCode::NOT_FOUND, "Session not found or not active/paused").into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            "Session not found or not active/paused",
+        )
+            .into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to complete session");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to complete session").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to complete session",
+            )
+                .into_response()
         }
     }
 }
 
-async fn api_get_session_telemetry(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+async fn api_get_session_telemetry(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
     match state.session_service.get_session_with_telemetry(&id).await {
         Ok(Some(session_with_telemetry)) => Json(session_with_telemetry).into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "Session not found").into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to get session with telemetry");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get session with telemetry").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to get session with telemetry",
+            )
+                .into_response()
         }
     }
 }
@@ -1357,35 +1853,69 @@ struct TelemetryPointRequest {
     setpoint: Option<f32>,
 }
 
-async fn api_add_telemetry_point(State(state): State<AppState>, Path(id): Path<String>, Json(req): Json<TelemetryPointRequest>) -> Response {
-    match state.session_service.add_telemetry_point(
-        &id, req.elapsed_seconds, req.bean_temp, req.env_temp, 
-        req.rate_of_rise, req.heater_pwm, req.fan_pwm, req.setpoint
-    ).await {
+async fn api_add_telemetry_point(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<TelemetryPointRequest>,
+) -> Response {
+    match state
+        .session_service
+        .add_telemetry_point(
+            &id,
+            req.elapsed_seconds,
+            req.bean_temp,
+            req.env_temp,
+            req.rate_of_rise,
+            req.heater_pwm,
+            req.fan_pwm,
+            req.setpoint,
+        )
+        .await
+    {
         Ok(_) => StatusCode::CREATED.into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to add telemetry point");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to add telemetry point").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to add telemetry point",
+            )
+                .into_response()
         }
     }
 }
 
 // Profile Management
-async fn api_create_profile(State(state): State<AppState>, Json(req): Json<CreateProfileRequest>) -> Response {
+async fn api_create_profile(
+    State(state): State<AppState>,
+    Json(req): Json<CreateProfileRequest>,
+) -> Response {
     match state.session_service.create_profile(req).await {
         Ok(profile) => Json(profile).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to create profile");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create profile").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create profile",
+            )
+                .into_response()
         }
     }
 }
 
 #[derive(Deserialize)]
-struct ProfileListQuery { include_private: Option<bool> }
+struct ProfileListQuery {
+    include_private: Option<bool>,
+}
 
-async fn api_list_profiles(State(state): State<AppState>, Query(q): Query<ProfileListQuery>) -> Response {
-    match state.session_service.list_profiles(q.include_private.unwrap_or(false)).await {
+async fn api_list_profiles(
+    State(state): State<AppState>,
+    Query(q): Query<ProfileListQuery>,
+) -> Response {
+    match state
+        .session_service
+        .list_profiles(q.include_private.unwrap_or(false))
+        .await
+    {
         Ok(profiles) => Json(profiles).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to list profiles");
@@ -1415,7 +1945,11 @@ async fn api_update_profile(
         Ok(None) => (StatusCode::NOT_FOUND, "Profile not found").into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to update profile");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update profile").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update profile",
+            )
+                .into_response()
         }
     }
 }
@@ -1426,17 +1960,28 @@ async fn api_delete_profile(State(state): State<AppState>, Path(id): Path<String
         Ok(false) => (StatusCode::NOT_FOUND, "Profile not found").into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to delete profile");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete profile").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to delete profile",
+            )
+                .into_response()
         }
     }
 }
 
-async fn api_import_artisan_profile(State(state): State<AppState>, Json(req): Json<ImportArtisanProfileRequest>) -> Response {
+async fn api_import_artisan_profile(
+    State(state): State<AppState>,
+    Json(req): Json<ImportArtisanProfileRequest>,
+) -> Response {
     match state.session_service.import_artisan_profile(req).await {
         Ok(profile) => Json(profile).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to import Artisan profile");
-            (StatusCode::BAD_REQUEST, format!("Failed to import Artisan profile: {}", e)).into_response()
+            (
+                StatusCode::BAD_REQUEST,
+                format!("Failed to import Artisan profile: {}", e),
+            )
+                .into_response()
         }
     }
 }
@@ -1474,7 +2019,7 @@ async fn api_set_setting(
 ) -> Response {
     let result = sqlx::query(
         "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
     )
     .bind(&key)
     .bind(&req.value)
@@ -1517,7 +2062,8 @@ async fn api_test_emit_telemetry(
             "freeHeap": 0,
             "rssi": -40,
             "systemStatus": 0
-        }).to_string()
+        })
+        .to_string()
     };
     publish_ok(&state, &topic, payload).await
 }
@@ -1538,48 +2084,87 @@ async fn api_test_emit_status(
             "rssi": -40,
             "freeHeap": 123456,
             "version": "test"
-        }).to_string()
+        })
+        .to_string()
     };
     publish_ok(&state, &topic, payload).await
 }
 
 // Roast Events API Handlers
-async fn api_get_roast_events(State(state): State<AppState>, Path(session_id): Path<String>) -> Response {
+async fn api_get_roast_events(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Response {
     match state.session_service.get_roast_events(&session_id).await {
         Ok(events) => Json(events).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to get roast events");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get roast events").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to get roast events",
+            )
+                .into_response()
         }
     }
 }
 
-async fn api_create_roast_event(State(state): State<AppState>, Path(session_id): Path<String>, Json(req): Json<CreateRoastEventRequest>) -> Response {
-    match state.session_service.create_roast_event(&session_id, req).await {
+async fn api_create_roast_event(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<CreateRoastEventRequest>,
+) -> Response {
+    match state
+        .session_service
+        .create_roast_event(&session_id, req)
+        .await
+    {
         Ok(event) => (StatusCode::CREATED, Json(event)).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to create roast event");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to create roast event").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create roast event",
+            )
+                .into_response()
         }
     }
 }
 
-async fn api_update_roast_event(State(state): State<AppState>, Path((_session_id, event_id)): Path<(String, String)>, Json(req): Json<UpdateRoastEventRequest>) -> Response {
-    match state.session_service.update_roast_event(&event_id, req).await {
+async fn api_update_roast_event(
+    State(state): State<AppState>,
+    Path((_session_id, event_id)): Path<(String, String)>,
+    Json(req): Json<UpdateRoastEventRequest>,
+) -> Response {
+    match state
+        .session_service
+        .update_roast_event(&event_id, req)
+        .await
+    {
         Ok(event) => Json(event).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to update roast event");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to update roast event").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update roast event",
+            )
+                .into_response()
         }
     }
 }
 
-async fn api_delete_roast_event(State(state): State<AppState>, Path((_session_id, event_id)): Path<(String, String)>) -> Response {
+async fn api_delete_roast_event(
+    State(state): State<AppState>,
+    Path((_session_id, event_id)): Path<(String, String)>,
+) -> Response {
     match state.session_service.delete_roast_event(&event_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to delete roast event");
-            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to delete roast event").into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to delete roast event",
+            )
+                .into_response()
         }
     }
 }

@@ -76,7 +76,10 @@ pub fn parse_telemetry(payload: &[u8]) -> Option<TelemetryPayload> {
 }
 
 fn epoch_secs() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Shared telemetry processing service used by MQTT consumer, device WebSocket handler,
@@ -128,10 +131,15 @@ impl TelemetryService {
         let now = epoch_secs();
 
         // Update metric
-        self.telemetry_last_seen.with_label_values(&[device_id]).set(now as i64);
+        self.telemetry_last_seen
+            .with_label_values(&[device_id])
+            .set(now as i64);
 
         // Always update telemetry cache
-        self.telemetry_cache.write().await.insert(device_id.to_string(), (payload.clone(), now));
+        self.telemetry_cache
+            .write()
+            .await
+            .insert(device_id.to_string(), (payload.clone(), now));
 
         // Broadcast to dashboard WebSocket clients
         let _ = self.telemetry_tx.send(TelemetryEvent {
@@ -190,7 +198,8 @@ impl TelemetryService {
         let debounce_interval = std::time::Duration::from_secs(10);
         let should_update = {
             let debounce = self.last_seen_debounce.lock().unwrap();
-            debounce.get(device_id)
+            debounce
+                .get(device_id)
                 .map(|last| last.elapsed() >= debounce_interval)
                 .unwrap_or(true)
         };
@@ -198,7 +207,9 @@ impl TelemetryService {
             if let Err(e) = self.device_service.update_last_seen(device_id).await {
                 tracing::warn!(%device_id, error = %e, "Failed to update last_seen");
             }
-            self.last_seen_debounce.lock().unwrap()
+            self.last_seen_debounce
+                .lock()
+                .unwrap()
                 .insert(device_id.to_string(), Instant::now());
         }
     }

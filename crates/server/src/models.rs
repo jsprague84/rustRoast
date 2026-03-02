@@ -1,9 +1,9 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::sqlite::{SqliteTypeInfo, SqliteValueRef};
+use sqlx::{Decode, Encode, FromRow, Type};
 #[allow(unused_imports)] // Used by future stories
 use uuid::Uuid;
-use sqlx::{FromRow, Type, Decode, Encode};
-use sqlx::sqlite::{SqliteTypeInfo, SqliteValueRef};
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct RoastSession {
@@ -16,7 +16,7 @@ pub struct RoastSession {
     pub end_time: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    
+
     // Metadata fields
     pub bean_origin: Option<String>,
     pub bean_variety: Option<String>,
@@ -26,7 +26,7 @@ pub struct RoastSession {
     pub notes: Option<String>,
     pub ambient_temp: Option<f32>,
     pub humidity: Option<f32>,
-    
+
     // Session summary data
     pub max_temp: Option<f32>,
     pub total_time_seconds: Option<i32>,
@@ -43,9 +43,9 @@ pub struct RoastProfile {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub is_public: bool,
-    
+
     // Profile settings
-    pub target_total_time: Option<i32>, // seconds
+    pub target_total_time: Option<i32>,  // seconds
     pub target_first_crack: Option<i32>, // seconds from start
     pub target_end_temp: Option<f32>,
     pub preheat_temp: Option<f32>,
@@ -80,12 +80,12 @@ pub struct SessionTelemetry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionStatus {
-    Planning,   // Created but not started
-    Active,     // Currently roasting
-    Paused,     // Temporarily paused
-    Completed,  // Successfully finished
-    Failed,     // Ended due to error
-    Cancelled,  // Manually cancelled
+    Planning,  // Created but not started
+    Active,    // Currently roasting
+    Paused,    // Temporarily paused
+    Completed, // Successfully finished
+    Failed,    // Ended due to error
+    Cancelled, // Manually cancelled
 }
 
 // SQLx implementations for SessionStatus
@@ -103,7 +103,10 @@ impl<'r> Decode<'r, sqlx::Sqlite> for SessionStatus {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for SessionStatus {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
         <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
     }
 }
@@ -112,7 +115,7 @@ impl std::fmt::Display for SessionStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
             SessionStatus::Planning => "planning",
-            SessionStatus::Active => "active", 
+            SessionStatus::Active => "active",
             SessionStatus::Paused => "paused",
             SessionStatus::Completed => "completed",
             SessionStatus::Failed => "failed",
@@ -124,7 +127,7 @@ impl std::fmt::Display for SessionStatus {
 
 impl std::str::FromStr for SessionStatus {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "planning" => Ok(SessionStatus::Planning),
@@ -243,7 +246,10 @@ impl<'r> Decode<'r, sqlx::Sqlite> for RoastEventType {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for RoastEventType {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
         <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
     }
 }
@@ -327,7 +333,10 @@ impl<'r> Decode<'r, sqlx::Sqlite> for DeviceStatus {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for DeviceStatus {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
         <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
     }
 }
@@ -382,7 +391,10 @@ impl<'r> Decode<'r, sqlx::Sqlite> for Protocol {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for Protocol {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
         <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
     }
 }
@@ -435,7 +447,10 @@ impl<'r> Decode<'r, sqlx::Sqlite> for ModbusRegisterType {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for ModbusRegisterType {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
         <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
     }
 }
@@ -492,7 +507,10 @@ impl<'r> Decode<'r, sqlx::Sqlite> for ModbusDataType {
 }
 
 impl<'q> Encode<'q, sqlx::Sqlite> for ModbusDataType {
-    fn encode_by_ref(&self, buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>) -> sqlx::encode::IsNull {
+    fn encode_by_ref(
+        &self,
+        buf: &mut Vec<sqlx::sqlite::SqliteArgumentValue<'q>>,
+    ) -> sqlx::encode::IsNull {
         <String as Encode<sqlx::Sqlite>>::encode_by_ref(&self.to_string(), buf)
     }
 }

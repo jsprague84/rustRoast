@@ -251,10 +251,7 @@ async fn add_connection(
         .await?
         .ok_or_else(|| AppError::not_found("Device"))?;
 
-    let connection = state
-        .device_service
-        .add_connection(&device_id, req)
-        .await?;
+    let connection = state.device_service.add_connection(&device_id, req).await?;
     Ok((StatusCode::CREATED, Json(connection)))
 }
 
@@ -298,10 +295,7 @@ async fn get_register_map(
         .await?
         .ok_or_else(|| AppError::not_found("Device"))?;
 
-    let registers = state
-        .device_service
-        .get_register_map(&device_id)
-        .await?;
+    let registers = state.device_service.get_register_map(&device_id).await?;
     Ok(Json(registers))
 }
 
@@ -322,10 +316,7 @@ async fn set_register_map(
         .set_register_map(&device_id, registers)
         .await?;
 
-    let updated = state
-        .device_service
-        .get_register_map(&device_id)
-        .await?;
+    let updated = state.device_service.get_register_map(&device_id).await?;
     Ok(Json(updated))
 }
 
@@ -355,7 +346,10 @@ async fn test_mqtt_connection(
             // Try to extract device_id from the topic_prefix config
             if let Some(prefix) = req.config.get("topic_prefix").and_then(|v| v.as_str()) {
                 // topic_prefix is typically "roaster/{device_id}"
-                prefix.strip_prefix("roaster/").unwrap_or(prefix).to_string()
+                prefix
+                    .strip_prefix("roaster/")
+                    .unwrap_or(prefix)
+                    .to_string()
             } else {
                 return Json(TestConnectionResponse {
                     success: false,
@@ -533,10 +527,7 @@ async fn test_websocket_connection(req: &TestConnectionRequest) -> Json<TestConn
         }
         Err(_) => Json(TestConnectionResponse {
             success: false,
-            message: format!(
-                "Connection to {} timed out after 5 seconds",
-                config.url
-            ),
+            message: format!("Connection to {} timed out after 5 seconds", config.url),
             latency_ms: Some(5000),
         }),
     }

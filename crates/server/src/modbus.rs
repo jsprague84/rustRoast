@@ -125,15 +125,15 @@ impl tokio_modbus::server::Service for RoasterModbusService {
                     read_holding_registers(&state, addr, cnt).await
                 }
                 Request::WriteSingleRegister(addr, value) => {
-                    write_registers(&state, addr, &[value]).await.map(|_| {
-                        Response::WriteSingleRegister(addr, value)
-                    })
+                    write_registers(&state, addr, &[value])
+                        .await
+                        .map(|_| Response::WriteSingleRegister(addr, value))
                 }
                 Request::WriteMultipleRegisters(addr, values) => {
                     let cnt = values.len() as u16;
-                    write_registers(&state, addr, &values).await.map(|_| {
-                        Response::WriteMultipleRegisters(addr, cnt)
-                    })
+                    write_registers(&state, addr, &values)
+                        .await
+                        .map(|_| Response::WriteMultipleRegisters(addr, cnt))
                 }
                 _ => Err(ExceptionCode::IllegalFunction),
             }
@@ -163,21 +163,13 @@ async fn read_input_registers(
     let (bean_temp, env_temp, ror, heater_pwm, fan_pwm) =
         if let Some((val, _ts)) = cache.get(&state.device_id) {
             (
-                val.get("beanTemp")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0) as f32,
-                val.get("envTemp")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0) as f32,
+                val.get("beanTemp").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
+                val.get("envTemp").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32,
                 val.get("rateOfRise")
                     .and_then(|v| v.as_f64())
                     .unwrap_or(0.0) as f32,
-                val.get("heaterPWM")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u16,
-                val.get("fanPWM")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u16,
+                val.get("heaterPWM").and_then(|v| v.as_u64()).unwrap_or(0) as u16,
+                val.get("fanPWM").and_then(|v| v.as_u64()).unwrap_or(0) as u16,
             )
         } else {
             (0.0, 0.0, 0.0, 0, 0)
@@ -191,9 +183,9 @@ async fn read_input_registers(
     let image = [
         bt[0], bt[1], // 0x0000-0x0001 bean_temp
         et[0], et[1], // 0x0002-0x0003 env_temp
-        rr[0], rr[1], // 0x0004-0x0005 rate_of_rise
-        heater_pwm,   // 0x0006
-        fan_pwm,      // 0x0007
+        rr[0], rr[1],      // 0x0004-0x0005 rate_of_rise
+        heater_pwm, // 0x0006
+        fan_pwm,    // 0x0007
     ];
 
     Ok(Response::ReadInputRegisters(
@@ -269,14 +261,24 @@ async fn publish_control_commands(state: &ModbusSharedState, start: u16, end: u1
                 let topic = rustroast_core::control_fan_pwm(device_id);
                 state
                     .mqtt
-                    .publish(&topic, QoS::AtMostOnce, false, regs[holding_reg::FAN_PWM as usize].to_string())
+                    .publish(
+                        &topic,
+                        QoS::AtMostOnce,
+                        false,
+                        regs[holding_reg::FAN_PWM as usize].to_string(),
+                    )
                     .await
             }
             holding_reg::HEATER_PWM => {
                 let topic = rustroast_core::control_heater_pwm(device_id);
                 state
                     .mqtt
-                    .publish(&topic, QoS::AtMostOnce, false, regs[holding_reg::HEATER_PWM as usize].to_string())
+                    .publish(
+                        &topic,
+                        QoS::AtMostOnce,
+                        false,
+                        regs[holding_reg::HEATER_PWM as usize].to_string(),
+                    )
                     .await
             }
             holding_reg::CONTROL_MODE => {
@@ -286,7 +288,10 @@ async fn publish_control_commands(state: &ModbusSharedState, start: u16, end: u1
                     "auto"
                 };
                 let topic = rustroast_core::control_mode(device_id);
-                state.mqtt.publish(&topic, QoS::AtMostOnce, false, mode).await
+                state
+                    .mqtt
+                    .publish(&topic, QoS::AtMostOnce, false, mode)
+                    .await
             }
             holding_reg::HEATER_ENABLE => {
                 let val = if regs[holding_reg::HEATER_ENABLE as usize] == 0 {
@@ -295,12 +300,18 @@ async fn publish_control_commands(state: &ModbusSharedState, start: u16, end: u1
                     "1"
                 };
                 let topic = rustroast_core::control_heater_enable(device_id);
-                state.mqtt.publish(&topic, QoS::AtMostOnce, false, val).await
+                state
+                    .mqtt
+                    .publish(&topic, QoS::AtMostOnce, false, val)
+                    .await
             }
             holding_reg::EMERGENCY_STOP => {
                 if regs[holding_reg::EMERGENCY_STOP as usize] == 1 {
                     let topic = rustroast_core::control_emergency_stop(device_id);
-                    state.mqtt.publish(&topic, QoS::AtMostOnce, false, "1").await
+                    state
+                        .mqtt
+                        .publish(&topic, QoS::AtMostOnce, false, "1")
+                        .await
                 } else {
                     continue;
                 }
@@ -309,7 +320,11 @@ async fn publish_control_commands(state: &ModbusSharedState, start: u16, end: u1
         };
 
         if let Err(e) = result {
-            tracing::warn!(?e, reg_addr, "Failed to publish MQTT command from Modbus write");
+            tracing::warn!(
+                ?e,
+                reg_addr,
+                "Failed to publish MQTT command from Modbus write"
+            );
         }
     }
 }
@@ -341,8 +356,8 @@ pub async fn start_modbus_server(
         }
     };
 
-    let device_id = std::env::var("RUSTROAST_MODBUS_DEVICE_ID")
-        .unwrap_or_else(|_| "esp32-001".to_string());
+    let device_id =
+        std::env::var("RUSTROAST_MODBUS_DEVICE_ID").unwrap_or_else(|_| "esp32-001".to_string());
 
     let shared_state = ModbusSharedState {
         telemetry_cache,
