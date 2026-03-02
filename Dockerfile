@@ -13,6 +13,7 @@ FROM rust:1.85-slim-bookworm AS backend
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
