@@ -1,0 +1,32 @@
+# Ralph Progress: rustRoast Full Modernization Rewrite
+# Branch: ralph/full-modernization-rewrite
+# Started: 2026-02-28
+
+## Current Status
+In progress — backend skeleton and frontend scaffold complete.
+
+## Completed Stories
+- US-001: Remove legacy coffee-roaster-bridge (already removed)
+- US-002: Create backend module skeleton and AppError type (error.rs, config.rs, routes/, ws/)
+- US-003: Extract DB models (already existed as models.rs)
+- US-004/005: Extract services (already existed as services.rs)
+- US-010: (skipped — no Modbus code to remove from backend)
+- US-015: Initialize SvelteKit project with TypeScript and Tailwind
+- US-016: Add SvelteKit routing structure and base layout
+- US-017: Create WebSocket store with typed telemetry
+- US-018: Create API client with authentication support
+- US-019: Connection status indicator (in layout) + API key settings page
+- US-020: ECharts wrapper component (Chart.svelte)
+- US-021: CurrentReadings display component
+- US-022: TelemetryChart component with BT/ET/RoR/PWM
+- US-023: Dashboard page wiring readings + chart
+
+## In Progress
+- Continuing with control panel, session management, landmarks
+
+## Notes
+- React app archived to apps/dashboard-react-archive/
+- SvelteKit project at apps/dashboard/ with adapter-static (SPA mode)
+- svelte-check passes with 0 errors, 0 warnings
+- npm run build produces static output in build/
+- ECharts bundle is 1.1MB — can be code-split later via dynamic import

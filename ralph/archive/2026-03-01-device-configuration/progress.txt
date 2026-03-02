@@ -1,0 +1,59 @@
+# Ralph Progress: rustRoast Profile Following & PID Autotune
+# Branch: ralph/profile-autotune
+# Started: 2026-03-01
+
+## Codebase Patterns
+- Migrations use `include_str!("../migrations/xxx.sql")` with split-by-semicolon execution and silent error handling (tables may already exist)
+- Use `IF NOT EXISTS` for all CREATE TABLE/INDEX/TRIGGER statements for idempotency
+- Triggers use `CREATE TRIGGER IF NOT EXISTS` syntax for updated_at auto-update
+- Foreign keys use `ON DELETE CASCADE` for child tables, `ON DELETE SET NULL` for optional references
+- AppState is in main.rs with clone-able fields (Arc<RwLock<...>>, SqlitePool, etc.)
+- RoastSessionService follows the service pattern: struct with SqlitePool, async methods returning Result
+- Route handlers are defined in main.rs (monolithic file) — control, session, profile, telemetry handlers all inline
+- Models (request/response structs) are in models.rs with Serialize/Deserialize derives
+- Tests use in-memory SQLite with the same migration pattern
+- serde_json::Value in FromRow structs requires: sqlx `json` feature in Cargo.toml + `#[sqlx(json)]` attribute on the field
+- When binding serde_json::Value to queries, convert to string first: `serde_json::to_string(&value)?`
+- set_register_map uses a transaction: DELETE all existing + INSERT new entries for atomic replacement
+- Route handlers can be separated into `routes/*.rs` files and merged via `Router::merge(device_routes())`
+- AppState must be `pub(crate)` for route modules to extract it; service fields also need `pub(crate)`
+- AppError pattern: struct with StatusCode + message, impl IntoResponse to emit JSON `{ error, status }`, impl From<anyhow::Error>
+- Existing `/api/devices` was renamed to `/api/devices/registry` (in-memory MQTT device cache); new `/api/devices` serves persistent device config
+- Standalone server components (Modbus TCP) go in `src/modbus.rs` (not services.rs which is for DB services)
+- tokio-modbus 0.16 TCP server needs `features = ["tcp-server"]`; Service trait `call(&self)` requires Pin<Box<dyn Future>> for async ops
+- When starting background tasks that clone Arc'd state, order matters: clone before the consumer loop that takes ownership
+- mqtt_consumer_loop uses `#[allow(clippy::too_many_arguments)]` since it legitimately needs many Arc'd caches plus services
+- Svelte 5 runes: `<svelte:component>` is deprecated — use dynamic component variables directly (`{@const Icon = fn()}, <Icon />`)
+- `{@const}` must be immediate child of block elements ({#each}, {#if}, etc.), not nested in HTML
+- Use `invalidateAll()` from `$app/navigation` after API mutations to re-run SvelteKit load functions
+- Register map data must be fetched separately via `getRegisterMap()` — not included in `ConfiguredDeviceWithConnections`
+- Auto-discovery creates device + MQTT connection in two calls; if connection creation fails, device still exists (partial success is acceptable)
+- Debounce HashMap<String, Instant> tracks per-device last-seen update times; no Arc needed since it's local to the consumer loop
+- Axum 0.7 (matchit) correctly handles literal routes like `/api/devices/discovered` alongside parameterized `/api/devices/:id` — literal takes priority
+- Frontend is SvelteKit with adapter-static (SPA served by Axum). Svelte 5 runes: $state, $derived, $effect, $props
+- Rune-based stores use .svelte.ts extension; regular TS stores use .ts
+- Frontend API client at $lib/api/client.ts with typed request<T>() helper; auth via Bearer token from localStorage
+- ECharts chart wrapper at $lib/components/Chart.svelte; tree-shaken imports via echarts/core
+- TelemetryChart.svelte computes chart options in $derived.by(); uses notMerge:false so must explicitly override stale properties (e.g., title: { show: false })
+- WebSocket telemetry store at $lib/stores/telemetry.ts with reconnect logic; supports device filtering via setSelectedDevice()
+- Notifications store at $lib/stores/notifications.ts for toast messages
+- Quality checks: `cargo build/test/clippy --workspace`, `npm run check` (svelte-check), `npm run build`, `npm test` (vitest)
+- Profile CRUD backend exists: create_profile, list_profiles, get_profile_with_points, delete_profile, import_artisan_profile in session_service
+- Profile DB tables: roast_profiles + profile_points (FK cascade delete). ProfilePoint has: time_seconds, target_temp, fan_speed, notes
+- Autotune backend fully implemented: start/stop/apply endpoints publish MQTT, status/results cached in-memory + persisted to SQLite
+- WebSocket /ws/telemetry forwards autotune events as: { autotune: { type: "status"|"results", data: ... } }
+- Telemetry broadcast uses TelemetryEvent via tokio::sync::broadcast channel in TelemetryService
+
+## 2026-03-01 - PF-001
+- Added `profiles.create()` and `profiles.update()` methods to frontend API client with `CreateProfileRequest` type
+- Added `update_profile` service method to `RoastSessionService` using SQLx transaction: UPDATE metadata + DELETE old points + INSERT new points
+- Added `PUT /api/profiles/:id` route and `api_update_profile` handler in main.rs
+- Added `test_profile_update_round_trip` test covering create, update with new points, fetch verification, and non-existent ID handling
+- Files changed: `crates/server/src/services.rs`, `crates/server/src/main.rs`, `apps/dashboard/src/lib/api/client.ts`
+- **Learnings for future iterations:**
+  - `RoastSessionService` uses the pool directly (no Arc wrapper); transaction via `self.db.begin().await`
+  - Bind transaction references as `&mut *tx` in sqlx queries
+  - Clippy catches identity maps like `.map(|opt| opt.map(|p| p))` — just return the inner expression directly
+  - The `CreateProfileRequest` model is reusable for both create and update endpoints (same field structure)
+  - Profile routes are inline in main.rs (not separated into route modules like devices)
+---
