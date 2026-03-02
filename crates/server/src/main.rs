@@ -1043,20 +1043,18 @@ async fn api_autotune_apply(Path(device_id): Path<String>, State(state): State<A
 //#[utoipa::path(get, path = "/api/roaster/{device_id}/autotune/status/latest", params(("device_id" = Path<String>)), responses((status = 200), (status = 404)))]
 async fn api_get_autotune_status_latest(Path(device_id): Path<String>, State(state): State<AppState>) -> Response {
     let map = state.autotune_status_cache.read().await;
-    if let Some((val, ts)) = map.get(&device_id) {
-        Json(serde_json::json!({"device_id": device_id, "timestamp": ts, "status": val})).into_response()
-    } else {
-        (StatusCode::NOT_FOUND, "No autotune status").into_response()
+    match map.get(&device_id) {
+        Some((val, ts)) => Json(serde_json::json!({"device_id": device_id, "timestamp": ts, "status": val})).into_response(),
+        None => Json(serde_json::json!(null)).into_response(),
     }
 }
 
-//#[utoipa::path(get, path = "/api/roaster/{device_id}/autotune/results/latest", params(("device_id" = Path<String>)), responses((status = 200), (status = 404)))]
+//#[utoipa::path(get, path = "/api/roaster/{device_id}/autotune/results/latest", params(("device_id" = Path<String>)), responses((status = 200)))]
 async fn api_get_autotune_results_latest(Path(device_id): Path<String>, State(state): State<AppState>) -> Response {
     let map = state.autotune_results_cache.read().await;
-    if let Some((val, ts)) = map.get(&device_id) {
-        Json(serde_json::json!({"device_id": device_id, "timestamp": ts, "results": val})).into_response()
-    } else {
-        (StatusCode::NOT_FOUND, "No autotune results").into_response()
+    match map.get(&device_id) {
+        Some((val, ts)) => Json(serde_json::json!({"device_id": device_id, "timestamp": ts, "results": val})).into_response(),
+        None => Json(serde_json::json!(null)).into_response(),
     }
 }
 

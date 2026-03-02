@@ -127,8 +127,7 @@ export function dismissResults(deviceId?: string, { skipStop = false } = {}) {
 	}
 }
 
-/** Fetch latest status/results from the API (for page refresh recovery).
- *  Uses raw fetch to avoid noisy console errors on expected 404s. */
+/** Fetch latest status/results from the API (for page refresh recovery). */
 export async function fetchLatestAutotune(deviceId: string) {
 	const base = import.meta.env.VITE_API_URL ?? '';
 	let latestPhase = '';
@@ -137,6 +136,7 @@ export async function fetchLatestAutotune(deviceId: string) {
 		const statusRes = await fetch(`${base}/api/roaster/${deviceId}/autotune/status/latest`);
 		if (statusRes.ok) {
 			const statusResp = await statusRes.json();
+			if (!statusResp) return; // no autotune data
 			const data = statusResp.status ?? statusResp;
 			latestPhase = String(data.phase ?? data.state ?? '').toUpperCase();
 			const stepCount = typeof data.current_step === 'number' ? data.current_step
