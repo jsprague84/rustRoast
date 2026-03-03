@@ -118,3 +118,13 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - Phase colors: Drying=#22c55e, Maillard=#eab308, Development=#92400e (Artisan convention)
   - PhaseTimingTable.svelte still exists (not deleted) in case other pages reference it
 ---
+
+## 2026-03-02 - AP-009
+- Added weight loss, AUC, and max RoR metric cards to session detail page
+- Files changed:
+  - `apps/dashboard/src/routes/sessions/[id]/+page.svelte` — added conditional metric grid between KeyTemperatures and PhaseStatsPanel
+- **Learnings for future iterations:**
+  - Frontend types (RoastSession in client.ts) already had all AP-001/AP-002 fields from earlier stories
+  - SessionWithTelemetry extends RoastSession, so new fields are automatically available
+  - Graceful hiding pattern: wrap entire section in `{#if field1 != null || field2 != null}` and individual cards in their own `{#if}`
+---
