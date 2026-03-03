@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { telemetry, telemetryHistory, rateOfRise } from '$lib/stores/telemetry.js';
+	import { telemetry, telemetryHistory, rateOfRise, rorWindowSeconds } from '$lib/stores/telemetry.js';
 	import { events as eventsApi, settings, type RoastSession } from '$lib/api/client.js';
 	import { notifications } from '$lib/stores/notifications.js';
 
@@ -83,10 +83,11 @@
 		const currentRoR = $rateOfRise;
 		if (currentRoR == null) return;
 
-		// Track RoR history for 30s moving average
-		rorHistory = [...rorHistory.slice(-30), currentRoR];
+		// Track RoR history using configured window size (at ~1Hz telemetry, readings ≈ seconds)
+		const windowSize = Math.max(10, $rorWindowSeconds);
+		rorHistory = [...rorHistory.slice(-windowSize), currentRoR];
 
-		if (rorHistory.length < 10) return; // Need some history
+		if (rorHistory.length < Math.min(10, windowSize)) return; // Need some history
 
 		const avg = rorHistory.reduce((s, v) => s + v, 0) / rorHistory.length;
 		if (avg <= 0) return;

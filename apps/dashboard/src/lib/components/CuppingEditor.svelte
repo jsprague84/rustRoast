@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
 	import * as echarts from 'echarts/core';
 	import { RadarChart } from 'echarts/charts';
 	import { TooltipComponent, TitleComponent } from 'echarts/components';
@@ -39,32 +38,32 @@
 	let chartContainer: HTMLDivElement;
 	let chart: echarts.ECharts | null = null;
 
-	onMount(async () => {
+	// Initialize chart and load data
+	$effect(() => {
+		if (!chartContainer) return;
 		chart = echarts.init(chartContainer);
 		updateChart();
 
 		// Load existing cupping data
-		try {
-			const existing = await cupping.get(sessionId);
+		cupping.get(sessionId).then((existing) => {
 			if (existing) {
 				hasExisting = true;
 				notes = existing.notes ?? '';
-				// Reset scores and fill from existing attributes
 				for (const attr of existing.attributes) {
 					if (attr.attribute_name in scores) {
 						scores[attr.attribute_name] = attr.score;
 					}
 				}
 			}
-		} catch {
-			// No existing cupping data
-		}
-		loaded = true;
-	});
+			loaded = true;
+		}).catch(() => {
+			loaded = true;
+		});
 
-	onDestroy(() => {
-		chart?.dispose();
-		chart = null;
+		return () => {
+			chart?.dispose();
+			chart = null;
+		};
 	});
 
 	function updateChart() {

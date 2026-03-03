@@ -79,6 +79,7 @@
 		]).then(() => {
 			alarmsSaved = true;
 			setTimeout(() => (alarmsSaved = false), 2000);
+			window.dispatchEvent(new CustomEvent('rustroast:alarms-updated'));
 		});
 	}
 
@@ -246,6 +247,7 @@
 				<div class="rounded-md border border-border/50 bg-muted/30 p-3 space-y-2">
 					<div class="flex items-center gap-2">
 						<input
+							id="alarm-enable-{i}"
 							type="checkbox"
 							bind:checked={alarm.enabled}
 							class="h-4 w-4 rounded border-border"
@@ -278,6 +280,8 @@
 							type="number"
 							bind:value={alarm.threshold}
 							step="0.5"
+							min="0"
+							max="999"
 							class="w-20 rounded-md border border-border bg-input px-2 py-1 text-sm text-foreground"
 						/>
 						<span class="text-muted-foreground">

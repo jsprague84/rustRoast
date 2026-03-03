@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS cupping_scores (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Index for fast session lookup
+CREATE INDEX IF NOT EXISTS idx_cupping_scores_session_id ON cupping_scores(session_id);
+
 -- Cupping attributes table
 CREATE TABLE IF NOT EXISTS cupping_attributes (
     id TEXT PRIMARY KEY,

@@ -19,8 +19,7 @@
 	let prevSessionId = $state<string | null>(null);
 	let audioCtx: AudioContext | null = null;
 
-	// Load alarm config
-	$effect(() => {
+	function loadAlarmConfig() {
 		settings.get().then((s) => {
 			soundEnabled = s['alarm_sound_enabled'] !== 'false';
 			try {
@@ -29,6 +28,18 @@
 				alarms = [];
 			}
 		});
+	}
+
+	// Load alarm config on mount
+	$effect(() => {
+		loadAlarmConfig();
+	});
+
+	// Re-load when settings are saved elsewhere (e.g., settings page)
+	$effect(() => {
+		const handler = () => loadAlarmConfig();
+		window.addEventListener('rustroast:alarms-updated', handler);
+		return () => window.removeEventListener('rustroast:alarms-updated', handler);
 	});
 
 	// Reset on session change

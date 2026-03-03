@@ -57,6 +57,12 @@
 		return `${m}:${s.toString().padStart(2, '0')}`;
 	}
 
+	let missingAlignSessions = $derived(
+		alignMode === 'event'
+			? loaded.filter((ls) => !ls.events.some((e) => e.event_type === alignEvent)).map((ls) => ls.session.name)
+			: []
+	);
+
 	function getEventOffset(ls: LoadedSession, eventType: string): number {
 		const evt = ls.events.find((e) => e.event_type === eventType);
 		return evt ? evt.elapsed_seconds : 0;
@@ -77,12 +83,12 @@
 				.filter((t) => t.bean_temp != null)
 				.map((t) => [t.elapsed_seconds - offset, t.bean_temp]);
 
-			// Compute RoR from telemetry
+			// Compute RoR from telemetry (central difference for consistency)
 			const rorData: [number, number][] = [];
-			for (let i = 1; i < telemetry.length; i++) {
-				const dt = telemetry[i].elapsed_seconds - telemetry[i - 1].elapsed_seconds;
-				if (dt > 0 && telemetry[i].bean_temp != null && telemetry[i - 1].bean_temp != null) {
-					const ror = ((telemetry[i].bean_temp! - telemetry[i - 1].bean_temp!) / dt) * 60;
+			for (let i = 1; i < telemetry.length - 1; i++) {
+				const dt = telemetry[i + 1].elapsed_seconds - telemetry[i - 1].elapsed_seconds;
+				if (dt > 0 && telemetry[i + 1].bean_temp != null && telemetry[i - 1].bean_temp != null) {
+					const ror = ((telemetry[i + 1].bean_temp! - telemetry[i - 1].bean_temp!) / dt) * 60;
 					rorData.push([telemetry[i].elapsed_seconds - offset, Math.round(ror * 10) / 10]);
 				}
 			}
@@ -203,6 +209,11 @@
 					<option value="first_crack_start">First Crack</option>
 					<option value="drop">Drop</option>
 				</select>
+				{#if missingAlignSessions.length > 0}
+					<span class="text-xs text-amber-400">
+						Missing event: {missingAlignSessions.join(', ')} (aligned to t=0)
+					</span>
+				{/if}
 			{/if}
 		</div>
 

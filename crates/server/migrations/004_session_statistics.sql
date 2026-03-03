@@ -9,4 +9,4 @@ ALTER TABLE roast_sessions ADD COLUMN avg_ror_drying REAL;
 ALTER TABLE roast_sessions ADD COLUMN avg_ror_maillard REAL;
 ALTER TABLE roast_sessions ADD COLUMN avg_ror_development REAL;
 ALTER TABLE roast_sessions ADD COLUMN drying_end_time INTEGER;
-ALTER TABLE roast_sessions ADD COLUMN drying_end_temp REAL
+ALTER TABLE roast_sessions ADD COLUMN drying_end_temp REAL;
