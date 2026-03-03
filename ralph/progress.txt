@@ -128,3 +128,19 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - SessionWithTelemetry extends RoastSession, so new fields are automatically available
   - Graceful hiding pattern: wrap entire section in `{#if field1 != null || field2 != null}` and individual cards in their own `{#if}`
 ---
+
+## 2026-03-02 - AP-010
+- Created roast comparison overlay page at /sessions/compare
+- Files changed:
+  - `apps/dashboard/src/routes/sessions/compare/+page.ts` (new) — page loader parsing ids from URL query params
+  - `apps/dashboard/src/routes/sessions/compare/+page.svelte` (new) — comparison chart with time/event alignment, per-session colored BT+RoR curves, metadata summary table
+  - `apps/dashboard/src/routes/sessions/+page.svelte` — added checkbox column for session selection, Compare button appears when ≥2 selected
+  - `apps/dashboard/src/routes/sessions/[id]/+page.svelte` — added Compare... link button
+- **Learnings for future iterations:**
+  - Pass session IDs via URL query params: `/sessions/compare?ids=id1,id2,id3`
+  - SvelteKit page load can access `url.searchParams` for query params
+  - Event alignment: subtract the event's elapsed_seconds from all telemetry points
+  - `events.list(id)` returns RoastEvent[] — must be loaded separately from sessions.get()
+  - ECharts handles negative x-axis values well for event-aligned charts
+  - Set mutation in Svelte 5: create new Set from old, modify, reassign (selectedIds = next)
+---
