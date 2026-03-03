@@ -3,12 +3,15 @@
 	import { goto } from '$app/navigation';
 	import Chart, { type ECOption } from '$lib/components/Chart.svelte';
 	import KeyTemperatures from '$lib/components/KeyTemperatures.svelte';
-	import PhaseTimingTable from '$lib/components/PhaseTimingTable.svelte';
+	import PhaseStatsPanel from '$lib/components/PhaseStatsPanel.svelte';
+	import CuppingEditor from '$lib/components/CuppingEditor.svelte';
 	import { landmarkColors, landmarkLabels } from '$lib/constants/landmarks.js';
 	import type { SessionTelemetryPoint } from '$lib/types/session.js';
-	import { sessions } from '$lib/api/client.js';
+	import { sessions, downloadFile } from '$lib/api/client.js';
 	import type { ProfileWithPoints } from '$lib/api/client.js';
 	import { notifications } from '$lib/stores/notifications.js';
+
+	let exporting = $state(false);
 
 	let { data }: PageProps = $props();
 
@@ -62,7 +65,8 @@
 				time_seconds: t.elapsed_seconds,
 				target_temp: t.bean_temp!,
 				fan_speed: t.fan_pwm != null ? Math.round(t.fan_pwm / 2.55) : null,
-				notes: null
+				notes: null,
+				target_env_temp: t.env_temp ?? null
 			}));
 
 		const firstTemp = points[0]?.target_temp ?? null;
@@ -81,6 +85,25 @@
 
 		sessionStorage.setItem('rustroast_profile_from_session', JSON.stringify(fromSession));
 		goto('/profiles/new');
+	}
+
+	async function handleExport(format: 'csv' | 'artisan') {
+		exporting = true;
+		try {
+			const dateStr = sessionData.start_time
+				? new Date(sessionData.start_time).toISOString().slice(0, 10)
+				: new Date(sessionData.created_at).toISOString().slice(0, 10);
+			const safeName = sessionData.name.replace(/\s+/g, '_');
+			const ext = format === 'csv' ? 'csv' : 'alog';
+			const filename = `${safeName}_${dateStr}.${ext}`;
+			await downloadFile(`/api/sessions/${sessionData.id}/export/${format}`, filename);
+			notifications.add(`Exported as ${ext.toUpperCase()}`, 'success');
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			notifications.add(`Export failed: ${msg}`, 'error');
+		} finally {
+			exporting = false;
+		}
 	}
 
 	function formatDate(iso: string): string {
@@ -178,6 +201,26 @@
 				{sessionData.status}
 			</span>
 			<div class="ml-auto flex items-center gap-2">
+				{#if sessionData.status === 'completed'}
+					<button
+						onclick={() => handleExport('csv')}
+						disabled={exporting}
+						class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-accent disabled:opacity-50"
+						title="Download CSV"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+						CSV
+					</button>
+					<button
+						onclick={() => handleExport('artisan')}
+						disabled={exporting}
+						class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-accent disabled:opacity-50"
+						title="Download Artisan (.alog)"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+						.alog
+					</button>
+				{/if}
 				<button
 					onclick={handleSaveAsProfile}
 					class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-accent"
@@ -186,6 +229,13 @@
 					<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
 					Save as Profile
 				</button>
+				<a
+					href="/sessions/compare?ids={sessionData.id}"
+					class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground hover:bg-accent"
+					title="Compare with other sessions"
+				>
+					Compare...
+				</a>
 				<button
 					onclick={handleDelete}
 					class="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/15"
@@ -213,6 +263,49 @@
 		<!-- Key Temperatures -->
 		<KeyTemperatures telemetry={sessionData.telemetry ?? []} events={sessionEvents} />
 
-		<!-- Phase Timing -->
-		<PhaseTimingTable events={sessionEvents} totalTimeSeconds={sessionData.total_time_seconds ?? null} />
+		<!-- Roast Metrics -->
+		{#if sessionData.weight_loss_pct != null || sessionData.auc_value != null || sessionData.max_ror != null}
+			<div class="grid gap-3 sm:grid-cols-3">
+				{#if sessionData.weight_loss_pct != null}
+					<div class="rounded-lg border border-border bg-card p-3">
+						<div class="text-xs font-medium text-muted-foreground">Weight Loss</div>
+						<div class="mt-1 text-lg font-semibold text-foreground">{sessionData.weight_loss_pct.toFixed(1)}%</div>
+						{#if sessionData.green_weight != null && sessionData.roasted_weight != null}
+							<div class="mt-0.5 text-xs text-muted-foreground">{sessionData.green_weight}g → {sessionData.roasted_weight}g</div>
+						{/if}
+					</div>
+				{/if}
+				{#if sessionData.auc_value != null}
+					<div class="rounded-lg border border-border bg-card p-3">
+						<div class="text-xs font-medium text-muted-foreground">AUC</div>
+						<div class="mt-1 text-lg font-semibold text-foreground">{Math.round(sessionData.auc_value)} °C·min</div>
+					</div>
+				{/if}
+				{#if sessionData.max_ror != null}
+					<div class="rounded-lg border border-border bg-card p-3">
+						<div class="text-xs font-medium text-muted-foreground">Max RoR</div>
+						<div class="mt-1 text-lg font-semibold text-foreground">{sessionData.max_ror.toFixed(1)} °C/min</div>
+					</div>
+				{/if}
+			</div>
+		{/if}
+
+		<!-- Phase Statistics -->
+		<PhaseStatsPanel
+			events={sessionEvents}
+			totalTimeSeconds={sessionData.total_time_seconds ?? null}
+			avgRorDrying={sessionData.avg_ror_drying}
+			avgRorMaillard={sessionData.avg_ror_maillard}
+			avgRorDevelopment={sessionData.avg_ror_development}
+		/>
+
+		<!-- Cupping Notes -->
+		<details class="rounded-lg border border-border bg-card">
+			<summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-foreground hover:bg-accent">
+				Cupping Notes
+			</summary>
+			<div class="border-t border-border p-4">
+				<CuppingEditor sessionId={sessionData.id} />
+			</div>
+		</details>
 	</div>

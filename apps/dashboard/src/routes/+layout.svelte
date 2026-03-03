@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { onMount, onDestroy } from 'svelte';
-	import { initTelemetrySocket, destroyTelemetrySocket, connectionStatus } from '$lib/stores/telemetry.js';
+	import { initTelemetrySocket, destroyTelemetrySocket, loadRorSettings, connectionStatus } from '$lib/stores/telemetry.js';
 	import NotificationToast from '$lib/components/NotificationToast.svelte';
 	import { Gauge, ScrollText, BarChart3, Cpu, Settings, Menu } from 'lucide-svelte';
 
@@ -11,6 +11,7 @@
 
 	onMount(() => {
 		initTelemetrySocket();
+		loadRorSettings();
 	});
 
 	onDestroy(() => {

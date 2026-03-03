@@ -1,5 +1,6 @@
 import { writable, derived, readonly } from 'svelte/store';
 import type { Telemetry, TelemetryMessage, AutotuneWsMessage, ConnectionStatus } from '$lib/types/telemetry.js';
+import { settings } from '$lib/api/client.js';
 
 function getWsUrl(): string {
 	if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL;
@@ -26,31 +27,138 @@ export const telemetryHistory = readonly(_history);
 /** Latest autotune WebSocket event (status or results). */
 export const autotuneEvent = readonly(_autotuneEvent);
 
-/** Rate of Rise calculated from telemetry history. */
-export const rateOfRise = derived(_history, ($history, set) => {
-	if ($history.length < 2) {
-		set(null);
-		return;
+/** RoR configuration stores. */
+const _rorWindowMs = writable(30_000);
+const _rorAlgorithm = writable<string>('moving_average');
+
+export const rorWindowSeconds = derived(_rorWindowMs, ($ms) => $ms / 1000);
+export const rorAlgorithm = readonly(_rorAlgorithm);
+
+/** Update RoR configuration. */
+export function setRorConfig(windowSeconds: number, algorithm: string) {
+	_rorWindowMs.set(windowSeconds * 1000);
+	_rorAlgorithm.set(algorithm);
+}
+
+/** Load RoR settings from the server. */
+export async function loadRorSettings() {
+	try {
+		const s = await settings.get();
+		const windowSec = parseInt(s['ror_window_seconds'] ?? '30', 10);
+		const algo = s['ror_smoothing_algorithm'] ?? 'moving_average';
+		if (!isNaN(windowSec) && windowSec >= 5 && windowSec <= 120) {
+			_rorWindowMs.set(windowSec * 1000);
+		}
+		_rorAlgorithm.set(algo);
+	} catch {
+		// Use defaults on error
 	}
-	// Use last 30 seconds of data for RoR calculation
-	const now = $history[$history.length - 1].timestamp;
-	const windowStart = now - 30_000;
-	const windowData = $history.filter((h) => h.timestamp >= windowStart);
-	if (windowData.length < 2) {
-		set(null);
-		return;
-	}
+}
+
+type HistoryEntry = { timestamp: number; telemetry: Telemetry };
+
+/** Moving average: endpoint difference over window (current behavior). */
+function rorMovingAverage(windowData: HistoryEntry[]): number | null {
+	if (windowData.length < 2) return null;
 	const first = windowData[0];
 	const last = windowData[windowData.length - 1];
-	const dt = (last.timestamp - first.timestamp) / 1000; // seconds
-	if (dt <= 0) {
-		set(null);
-		return;
-	}
+	const dt = (last.timestamp - first.timestamp) / 1000;
+	if (dt <= 0) return null;
 	const dTemp = last.telemetry.beanTemp - first.telemetry.beanTemp;
-	// RoR in °C/min
-	set(Math.round(((dTemp / dt) * 60) * 10) / 10);
-}, null as number | null);
+	return Math.round(((dTemp / dt) * 60) * 10) / 10;
+}
+
+/** Weighted moving average: linearly weighted slope, recent samples weighted higher. */
+function rorWeightedMovingAverage(windowData: HistoryEntry[]): number | null {
+	if (windowData.length < 2) return null;
+	const n = windowData.length;
+	const wSum = (n * (n + 1)) / 2;
+	const t0 = windowData[0].timestamp / 1000;
+
+	let sumW = 0, sumWT = 0, sumWY = 0, sumWTT = 0, sumWTY = 0;
+	for (let i = 0; i < n; i++) {
+		const w = (i + 1) / wSum;
+		const t = windowData[i].timestamp / 1000 - t0;
+		const y = windowData[i].telemetry.beanTemp;
+		sumW += w;
+		sumWT += w * t;
+		sumWY += w * y;
+		sumWTT += w * t * t;
+		sumWTY += w * t * y;
+	}
+
+	const denom = sumW * sumWTT - sumWT * sumWT;
+	if (Math.abs(denom) < 1e-10) return null;
+	const slope = (sumW * sumWTY - sumWT * sumWY) / denom;
+	return Math.round(slope * 60 * 10) / 10;
+}
+
+/** Savitzky-Golay: 2nd-order polynomial fit, derivative at center point. */
+function rorSavitzkyGolay(windowData: HistoryEntry[]): number | null {
+	if (windowData.length < 3) return null;
+	const n = windowData.length;
+	const tMid = windowData[Math.floor(n / 2)].timestamp / 1000;
+
+	let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+	let r0 = 0, r1 = 0, r2 = 0;
+
+	for (let i = 0; i < n; i++) {
+		const t = windowData[i].timestamp / 1000 - tMid;
+		const y = windowData[i].telemetry.beanTemp;
+		const t2 = t * t;
+		s0 += 1;
+		s1 += t;
+		s2 += t2;
+		s3 += t * t2;
+		s4 += t2 * t2;
+		r0 += y;
+		r1 += t * y;
+		r2 += t2 * y;
+	}
+
+	// Solve 3x3 normal equations via Cramer's rule
+	const det = s0 * (s2 * s4 - s3 * s3) - s1 * (s1 * s4 - s2 * s3) + s2 * (s1 * s3 - s2 * s2);
+	if (Math.abs(det) < 1e-10) return null;
+
+	// b coefficient (first derivative at center): replace column 2 with RHS
+	const detB = s0 * (r1 * s4 - r2 * s3) - r0 * (s1 * s4 - s2 * s3) + s2 * (s1 * r2 - s2 * r1);
+	const b = detB / det;
+
+	// Derivative at t=0 (centered at tMid) is just b; convert to °C/min
+	return Math.round(b * 60 * 10) / 10;
+}
+
+/** Rate of Rise calculated from telemetry history. */
+export const rateOfRise = derived(
+	[_history, _rorWindowMs, _rorAlgorithm],
+	([$history, $windowMs, $algorithm], set) => {
+		if ($history.length < 2) {
+			set(null);
+			return;
+		}
+		const now = $history[$history.length - 1].timestamp;
+		const windowStart = now - $windowMs;
+		const windowData = $history.filter((h) => h.timestamp >= windowStart);
+		if (windowData.length < 2) {
+			set(null);
+			return;
+		}
+
+		let result: number | null;
+		switch ($algorithm) {
+			case 'weighted_moving_average':
+				result = rorWeightedMovingAverage(windowData);
+				break;
+			case 'savitzky_golay':
+				result = rorSavitzkyGolay(windowData);
+				break;
+			default:
+				result = rorMovingAverage(windowData);
+		}
+		set(result);
+	},
+	null as number | null
+);
 
 let ws: WebSocket | null = null;
 let reconnectAttempts = 0;

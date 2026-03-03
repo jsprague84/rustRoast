@@ -3,13 +3,16 @@
 	import Chart, { type ECOption } from '$lib/components/Chart.svelte';
 	import { profiles, type CreateProfileRequest, type ProfileWithPoints } from '$lib/api/client.js';
 	import { notifications } from '$lib/stores/notifications.js';
-	import { Trash2, Table, LineChart } from 'lucide-svelte';
+	import { Trash2, Table, LineChart, ArrowRightLeft } from 'lucide-svelte';
 	import type { GraphicComponentOption } from 'echarts/components';
+	import ProfileTransposer from '$lib/components/ProfileTransposer.svelte';
+	import { fitNaturalCubicSpline, evaluateSplineGrid, evaluateDerivativeGrid } from '$lib/utils/spline.js';
 
 	interface DesignerPoint {
 		time_seconds: number;
 		target_temp: number;
 		fan_speed: number | null;
+		target_env_temp: number | null;
 	}
 
 	const SYMBOL_SIZE = 14;
@@ -37,7 +40,8 @@
 					.map((p) => ({
 						time_seconds: p.time_seconds,
 						target_temp: p.target_temp,
-						fan_speed: p.fan_speed
+						fan_speed: p.fan_speed,
+						target_env_temp: p.target_env_temp ?? null
 					}))
 			: []
 	);
@@ -46,6 +50,7 @@
 	let saving = $state(false);
 	let dragging = $state(false);
 	let chartReady = $state(false);
+	let showTransposer = $state(false);
 
 	let chartComponent: ReturnType<typeof Chart> | undefined = $state();
 
@@ -59,7 +64,8 @@
 		const newPoint: DesignerPoint = {
 			time_seconds: Math.round(timeSec),
 			target_temp: Math.round(temp * 10) / 10,
-			fan_speed: null
+			fan_speed: null,
+			target_env_temp: null
 		};
 		points.push(newPoint);
 		points.sort((a, b) => a.time_seconds - b.time_seconds);
@@ -120,23 +126,46 @@
 		return { min: Math.max(0, Math.floor(lo - padding)), max: Math.ceil(hi + padding) };
 	}
 
-	// Build the graphic overlay elements — draggable circles for each point
-	function buildGraphic(instance: ReturnType<NonNullable<typeof chartComponent>['getInstance']>): GraphicComponentOption[] {
+	// Build the graphic overlay elements — draggable circles for each point.
+	// Uses the axis ranges we are about to apply (not the chart's current stale state)
+	// so that graphic positions are always in sync with series data.
+	function buildGraphic(
+		instance: ReturnType<NonNullable<typeof chartComponent>['getInstance']>,
+		xMin: number, xMax: number,
+		yMin: number, yMax: number
+	): GraphicComponentOption[] {
 		if (!instance) return [];
-		const sorted = sortedPoints();
-		return sorted.map((pt) => {
-			const pos = instance.convertToPixel('grid', [pt.time_seconds, pt.target_temp]);
-			if (!pos) return { type: 'circle', ignore: true };
 
+		// Compute pixel mapping from the axis ranges we're about to set,
+		// matching the grid offsets in chartOption exactly.
+		const cw = instance.getWidth();
+		const ch = instance.getHeight();
+		const gl = 55, gr = 55, gt = 40, gb = 45;
+		const pw = cw - gl - gr;
+		const ph = ch - gt - gb;
+		const xSpan = (xMax - xMin) || 1;
+		const ySpan = (yMax - yMin) || 1;
+
+		function toPixel(dataX: number, dataY: number): [number, number] {
+			return [
+				gl + ((dataX - xMin) / xSpan) * pw,
+				gt + (1 - (dataY - yMin) / ySpan) * ph
+			];
+		}
+
+		const sorted = sortedPoints();
+		const elements: GraphicComponentOption[] = [];
+
+		for (const pt of sorted) {
 			// Map back to the real index in the unsorted `points` array
 			const realIdx = points.findIndex(
 				(p) => p.time_seconds === pt.time_seconds && p.target_temp === pt.target_temp
 			);
-
 			const isSelected = selectedIndex === realIdx;
-			const [px, py] = pos as number[];
 
-			return {
+			// BT handle (amber)
+			const [px, py] = toPixel(pt.time_seconds, pt.target_temp);
+			elements.push({
 				type: 'circle',
 				x: px,
 				y: py,
@@ -160,50 +189,170 @@
 				},
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				ondragend(this: any) {
-					// Re-sort after drag completes
 					points.sort((a, b) => a.time_seconds - b.time_seconds);
-					// Keep the same point selected (its index may have changed)
 					if (realIdx >= 0 && realIdx < points.length) {
 						const movedPt = points[realIdx];
-						selectedIndex = points.findIndex(
-							(p) => p === movedPt
-						);
+						selectedIndex = points.findIndex((p) => p === movedPt);
 					}
 				},
 				onclick() {
 					selectedIndex = realIdx >= 0 ? realIdx : null;
 				}
-			};
-		});
+			});
+
+			// ET handle (blue) — only for points that have an ET value
+			if (pt.target_env_temp !== null) {
+				const [epx, epy] = toPixel(pt.time_seconds, pt.target_env_temp);
+				elements.push({
+					type: 'circle',
+					x: epx,
+					y: epy,
+					shape: { r: SYMBOL_SIZE / 2 - 1 },
+					style: {
+						fill: isSelected ? '#ef4444' : '#60a5fa',
+						stroke: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
+						lineWidth: isSelected ? 3 : 1
+					},
+					draggable: 'vertical' as unknown as boolean,
+					z: 99,
+					cursor: 'ns-resize',
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					ondrag(this: any) {
+						dragging = true;
+						const newVal = instance.convertFromPixel('grid', [this.x, this.y] as [number, number]);
+						if (!newVal || realIdx < 0) return;
+						const [, newTemp] = newVal as number[];
+						points[realIdx].target_env_temp = Math.max(0, Math.round(newTemp * 10) / 10);
+					},
+					onclick() {
+						selectedIndex = realIdx >= 0 ? realIdx : null;
+					}
+				});
+			}
+		}
+
+		return elements;
 	}
+
+	// Find time (seconds) where interpolated temp crosses a threshold
+	function findTempCrossing(sorted: DesignerPoint[], threshold: number): number | null {
+		if (sorted.length < 2) return null;
+		for (let i = 0; i < sorted.length - 1; i++) {
+			const p0 = sorted[i];
+			const p1 = sorted[i + 1];
+			if (p0.target_temp <= threshold && p1.target_temp >= threshold) {
+				const frac = (threshold - p0.target_temp) / (p1.target_temp - p0.target_temp);
+				return Math.round(p0.time_seconds + frac * (p1.time_seconds - p0.time_seconds));
+			}
+		}
+		return null;
+	}
+
+	// Phase temperature thresholds
+	const DRY_TEMP = 150;
+	const FC_TEMP = 200;
+
+	// Derived DTR preview
+	let dtrInfo = $derived.by(() => {
+		const sorted = sortedPoints();
+		if (sorted.length < 2) return null;
+		const totalTime = sorted[sorted.length - 1].time_seconds;
+		const fcTime = findTempCrossing(sorted, FC_TEMP);
+		if (fcTime === null || totalTime <= 0) return null;
+		const dtr = ((totalTime - fcTime) / totalTime) * 100;
+		return { dtr: Math.round(dtr * 10) / 10, fcTime, totalTime };
+	});
 
 	// Chart options — includes graphic overlay for draggable points
 	let chartOption = $derived.by<ECOption>(() => {
 		const sorted = sortedPoints();
-		const chartData = sorted.map((p) => [p.time_seconds, p.target_temp]);
 
 		const times = sorted.map((p) => p.time_seconds);
 		const temps = sorted.map((p) => p.target_temp);
 		const xRange = axisRange(times, 720, 30); // default 12 min for empty chart
 		const yRange = axisRange(temps, 250, 20);  // default 250°C for empty chart
+		const maxTime = sorted.length > 0 ? sorted[sorted.length - 1].time_seconds : 0;
+
+		// Fit cubic spline for BT curve
+		const btSpline = fitNaturalCubicSpline(sorted.map((p) => ({ x: p.time_seconds, y: p.target_temp })));
+		const btCurveData = sorted.length >= 2
+			? evaluateSplineGrid(btSpline, 0, maxTime, 2)
+			: sorted.map((p): [number, number] => [p.time_seconds, p.target_temp]);
+
+		// Compute RoR from spline derivative (°C/s → °C/min)
+		const rorData: [number, number][] = sorted.length >= 2
+			? evaluateDerivativeGrid(btSpline, 0, maxTime, 5).map(([t, dy]) => [t, Math.round(dy * 60 * 10) / 10])
+			: [];
+		const rorValues = rorData.map(([, v]) => v);
+		const rorMax = rorValues.length > 0 ? Math.max(...rorValues, 5) : 30;
+		const rorMin = rorValues.length > 0 ? Math.min(...rorValues, 0) : 0;
+
+		// ET (Environment Temp) spline — only when ET data exists
+		const etPoints = sorted.filter((p) => p.target_env_temp !== null);
+		const hasEtData = etPoints.length >= 2;
+		let etCurveData: [number, number][] = [];
+		if (hasEtData) {
+			const etSpline = fitNaturalCubicSpline(etPoints.map((p) => ({ x: p.time_seconds, y: p.target_env_temp! })));
+			etCurveData = evaluateSplineGrid(etSpline, 0, maxTime, 2);
+		}
+
+		// Fan speed data (only points with non-null fan_speed)
+		const fanData = sorted
+			.filter((p) => p.fan_speed !== null)
+			.map((p) => [p.time_seconds, p.fan_speed as number]);
+		const hasFanData = fanData.length > 0;
+
+		// Right Y-axis range: use 0-100 when fan data exists, otherwise fit RoR
+		const rightAxisMax = hasFanData ? 100 : Math.ceil(rorMax + 2);
+		const rightAxisMin = hasFanData ? 0 : Math.floor(rorMin);
+
+		// Phase markers (vertical dashed lines)
+		const dryTime = findTempCrossing(sorted, DRY_TEMP);
+		const fcTime = findTempCrossing(sorted, FC_TEMP);
+
+		const markLineData: { xAxis: number; label?: { formatter: string; position: 'insideEndTop' }; lineStyle?: { color: string } }[] = [];
+		if (dryTime !== null) {
+			markLineData.push({
+				xAxis: dryTime,
+				label: { formatter: 'DRY', position: 'insideEndTop' },
+				lineStyle: { color: '#22c55e' }
+			});
+		}
+		if (fcTime !== null) {
+			markLineData.push({
+				xAxis: fcTime,
+				label: { formatter: 'FC', position: 'insideEndTop' },
+				lineStyle: { color: '#eab308' }
+			});
+		}
 
 		// Build graphic overlays (draggable handles).
 		// Access chartReady to re-run this derivation after the chart instance is initialized.
+		// Pass axis ranges so graphic positions use the same mapping as the series data,
+		// avoiding stale-axis bugs when points change significantly (e.g. after transpose).
 		const instance = chartReady ? chartComponent?.getInstance() : null;
-		const graphicElements: GraphicComponentOption[] = instance ? buildGraphic(instance) : [];
+		const graphicElements: GraphicComponentOption[] = instance
+			? buildGraphic(instance, xRange.min, xRange.max, yRange.min, yRange.max)
+			: [];
 
 		return {
 			animation: false,
-			grid: { left: 55, right: 20, top: 30, bottom: 45 },
+			grid: { left: 55, right: 55, top: 40, bottom: 45 },
+			legend: {
+				show: true,
+				top: 5,
+				textStyle: { color: '#9ca3af', fontSize: 11 }
+			},
 			tooltip: {
 				trigger: 'item',
 				formatter: (params: unknown) => {
-					const p = params as { data?: number[] };
+					const p = params as { data?: number[]; seriesName?: string };
 					if (!p.data) return '';
-					const [t, temp] = p.data;
+					const [t, val] = p.data;
 					const m = Math.floor(t / 60);
 					const s = Math.round(t % 60);
-					return `Time: ${m}:${s.toString().padStart(2, '0')}<br/>Temp: ${temp}°C`;
+					const unit = p.seriesName === 'Simulated RoR' ? '°C/min' : p.seriesName === 'Fan Speed' ? '%' : '°C';
+					return `Time: ${m}:${s.toString().padStart(2, '0')}<br/>${p.seriesName}: ${val.toFixed(1)}${unit}`;
 				}
 			},
 			xAxis: {
@@ -223,27 +372,83 @@
 				axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
 				splitLine: { show: false }
 			},
-			yAxis: {
-				type: 'value',
-				name: 'Temp (°C)',
-				min: yRange.min,
-				max: yRange.max,
-				nameTextStyle: { color: '#9ca3af' },
-				axisLabel: { color: '#9ca3af' },
-				axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
-				splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } }
-			},
+			yAxis: [
+				{
+					type: 'value',
+					name: 'Temp (°C)',
+					min: yRange.min,
+					max: yRange.max,
+					nameTextStyle: { color: '#9ca3af' },
+					axisLabel: { color: '#9ca3af' },
+					axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
+					splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } }
+				},
+				{
+					type: 'value',
+					name: hasFanData ? 'RoR / Fan %' : 'RoR (°C/min)',
+					min: rightAxisMin,
+					max: rightAxisMax,
+					nameTextStyle: { color: '#34d399' },
+					axisLabel: { color: '#34d399' },
+					axisLine: { lineStyle: { color: '#34d399' } },
+					splitLine: { show: false }
+				}
+			],
 			series: [
 				{
 					id: 'profile',
-					name: 'Profile',
+					name: 'BT Profile',
 					type: 'line',
-					data: chartData,
+					data: btCurveData,
 					itemStyle: { color: '#f59e0b' },
 					lineStyle: { width: 2 },
 					showSymbol: false,
-					symbolSize: 0
-				}
+					symbolSize: 0,
+					markLine: markLineData.length > 0 ? {
+						silent: true,
+						symbol: 'none',
+						lineStyle: { type: 'dashed', width: 1 },
+						label: { color: '#9ca3af', fontSize: 10 },
+						data: markLineData
+					} : undefined
+				},
+				...(hasEtData ? [{
+					id: 'et',
+					name: 'ET Profile',
+					type: 'line' as const,
+					data: etCurveData,
+					itemStyle: { color: '#60a5fa' },
+					lineStyle: { width: 1.5, type: 'dashed' as const, color: '#60a5fa' },
+					showSymbol: false,
+					symbolSize: 0,
+					silent: true
+				}] : []),
+				{
+					id: 'ror',
+					name: 'Simulated RoR',
+					type: 'line',
+					data: rorData,
+					yAxisIndex: 1,
+					itemStyle: { color: '#34d399' },
+					lineStyle: { width: 1.5, type: 'dashed', color: '#34d399' },
+					showSymbol: false,
+					symbolSize: 0,
+					silent: true
+				},
+				...(hasFanData ? [{
+					id: 'fan',
+					name: 'Fan Speed',
+					type: 'line' as const,
+					step: 'end' as const,
+					data: fanData,
+					yAxisIndex: 1,
+					itemStyle: { color: '#a78bfa' },
+					lineStyle: { width: 1.5, color: '#a78bfa' },
+					areaStyle: { opacity: 0.15, color: '#a78bfa' },
+					showSymbol: false,
+					symbolSize: 0,
+					silent: true
+				}] : [])
 			],
 			graphic: graphicElements
 		};
@@ -273,7 +478,8 @@
 				points: sorted.map((p) => ({
 					time_seconds: p.time_seconds,
 					target_temp: p.target_temp,
-					fan_speed: p.fan_speed ?? undefined
+					fan_speed: p.fan_speed ?? undefined,
+					target_env_temp: p.target_env_temp ?? undefined
 				}))
 			};
 
@@ -386,6 +592,15 @@
 				>
 					<Table class="h-4 w-4" />
 				</button>
+				{#if points.length >= 2}
+					<button
+						onclick={() => (showTransposer = true)}
+						class="rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+						title="Transpose profile"
+					>
+						<ArrowRightLeft class="h-4 w-4" />
+					</button>
+				{/if}
 				{#if selectedIndex !== null}
 					<button
 						onclick={deleteSelected}
@@ -403,6 +618,13 @@
 			<div style="height: 350px;">
 				<Chart bind:this={chartComponent} option={chartOption} />
 			</div>
+			{#if dtrInfo}
+				<div class="mt-2 flex items-center gap-4 rounded border border-border/50 bg-card/50 px-3 py-1.5 text-xs text-muted-foreground">
+					<span class="font-medium text-amber-400">Est. DTR: {dtrInfo.dtr}%</span>
+					<span>FC at {Math.floor(dtrInfo.fcTime / 60)}:{(dtrInfo.fcTime % 60).toString().padStart(2, '0')}</span>
+					<span>Total: {Math.floor(dtrInfo.totalTime / 60)}:{(dtrInfo.totalTime % 60).toString().padStart(2, '0')}</span>
+				</div>
+			{/if}
 		{:else}
 			<!-- Table view -->
 			{#if points.length === 0}
@@ -413,7 +635,8 @@
 						<thead>
 							<tr class="border-b border-border text-left text-xs text-muted-foreground">
 								<th class="px-3 py-2">Time (s)</th>
-								<th class="px-3 py-2">Temp (°C)</th>
+								<th class="px-3 py-2">BT (°C)</th>
+								<th class="px-3 py-2">ET (°C)</th>
 								<th class="px-3 py-2">Fan Speed</th>
 								<th class="px-3 py-2 w-10"></th>
 							</tr>
@@ -446,6 +669,20 @@
 												if (!isNaN(val) && val >= 0) points[realIndex].target_temp = val;
 											}}
 											class="w-20 rounded border border-border bg-input px-2 py-1 text-sm text-foreground"
+											step="0.1"
+											min="0"
+										/>
+									</td>
+									<td class="px-3 py-1.5">
+										<input
+											type="number"
+											value={point.target_env_temp ?? ''}
+											oninput={(e) => {
+												const v = (e.target as HTMLInputElement).value;
+												points[realIndex].target_env_temp = v === '' ? null : parseFloat(v);
+											}}
+											class="w-20 rounded border border-border bg-input px-2 py-1 text-sm text-foreground"
+											placeholder="-"
 											step="0.1"
 											min="0"
 										/>
@@ -487,7 +724,7 @@
 		{@const point = points[selectedIndex]}
 		<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
 			<h3 class="mb-2 text-sm font-semibold text-amber-400">Selected Point</h3>
-			<div class="grid gap-3 sm:grid-cols-3">
+			<div class="grid gap-3 sm:grid-cols-4">
 				<div>
 					<label for="edit-time" class="mb-1 block text-xs font-medium text-muted-foreground">Time (seconds)</label>
 					<input
@@ -499,12 +736,28 @@
 					/>
 				</div>
 				<div>
-					<label for="edit-temp" class="mb-1 block text-xs font-medium text-muted-foreground">Temperature (°C)</label>
+					<label for="edit-temp" class="mb-1 block text-xs font-medium text-muted-foreground">BT (°C)</label>
 					<input
 						id="edit-temp"
 						type="number"
 						bind:value={point.target_temp}
 						class="w-full rounded border border-border bg-input px-3 py-1.5 text-sm text-foreground"
+						step="0.1"
+						min="0"
+					/>
+				</div>
+				<div>
+					<label for="edit-et" class="mb-1 block text-xs font-medium text-muted-foreground">ET (°C)</label>
+					<input
+						id="edit-et"
+						type="number"
+						value={point.target_env_temp ?? ''}
+						oninput={(e) => {
+							const v = (e.target as HTMLInputElement).value;
+							point.target_env_temp = v === '' ? null : parseFloat(v);
+						}}
+						class="w-full rounded border border-border bg-input px-3 py-1.5 text-sm text-foreground"
+						placeholder="Optional"
 						step="0.1"
 						min="0"
 					/>
@@ -529,3 +782,20 @@
 		</div>
 	{/if}
 </div>
+
+{#if showTransposer}
+	<ProfileTransposer
+		points={sortedPoints()}
+		onApply={(transformed) => {
+			points = transformed.map((p) => ({
+				time_seconds: p.time_seconds,
+				target_temp: p.target_temp,
+				fan_speed: p.fan_speed,
+				target_env_temp: p.target_env_temp
+			}));
+			selectedIndex = null;
+			showTransposer = false;
+		}}
+		onCancel={() => (showTransposer = false)}
+	/>
+{/if}

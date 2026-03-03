@@ -16,9 +16,17 @@
 				role="alert"
 			>
 				<span class="flex-1 text-sm">{notif.message}</span>
+				{#if notif.action}
+					<button
+						onclick={() => { notif.action?.callback(); notifications.dismiss(notif.id); }}
+						class="shrink-0 rounded bg-amber-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-amber-700"
+					>
+						{notif.action.label}
+					</button>
+				{/if}
 				<button
 					onclick={() => notifications.dismiss(notif.id)}
-					class="ml-2 shrink-0 text-current opacity-60 hover:opacity-100"
+					class="ml-1 shrink-0 text-current opacity-60 hover:opacity-100"
 					aria-label="Dismiss notification"
 				>
 					&times;

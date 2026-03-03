@@ -20,7 +20,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 1,
-      "passes": true,
+      "passes": false,
       "notes": "The complete_session method is in crates/server/src/services.rs. It already calculates max_temp and total_time_seconds from telemetry. Extend the same transaction to query roast_events for the session to get phase boundaries, then query session_telemetry for avg(rate_of_rise) within each time range. Add columns via ALTER TABLE in init_db (use IF NOT EXISTS pattern — SQLite doesn't support it for ALTER TABLE, so wrap each ALTER in a separate query that silently fails if column exists, e.g. check sqlite_master). The UpdateSessionRequest already has first_crack_time and development_time_ratio as optional fields — auto-calculation should overwrite these if events exist. Frontend types in session.ts and client.ts will need the new fields added."
     },
     {
@@ -40,7 +40,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 2,
-      "passes": true,
+      "passes": false,
       "notes": "The trapezoidal rule is straightforward: query session_telemetry ORDER BY elapsed_seconds, iterate pairwise, accumulate. Base temp subtraction: for each sample, use max(0, bean_temp - base_temp) to avoid negative contributions. The AUC start event means we skip telemetry before the relevant event's elapsed_seconds. Settings are read via the existing settings table (SELECT value FROM settings WHERE key = ?). Add auc_base_temp and auc_start_event defaults in init_db alongside profile_lookahead_seconds. Result unit is °C·min — Artisan uses this unit for comparability. Frontend types need auc_value added to RoastSession."
     },
     {
@@ -55,7 +55,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 3,
-      "passes": true,
+      "passes": false,
       "notes": "This is a minimal backend story — just seed the default settings in init_db using INSERT OR IGNORE. The actual smoothing computation happens in the frontend telemetry store (AP-007). The backend only persists the preference. Add the two INSERT OR IGNORE statements alongside the existing profile_lookahead_seconds seed."
     },
     {
@@ -76,7 +76,7 @@
         "npm run build succeeds"
       ],
       "priority": 4,
-      "passes": true,
+      "passes": false,
       "notes": "The RoR simulation is a pure computation from the profile points — no backend needed. Algorithm: (1) sort points by time_seconds, (2) for each 5-second interval from 0 to max_time, interpolate BT using linear interpolation between surrounding points (reuse interpolateTarget from profile.svelte.ts), (3) compute central difference derivative: RoR[t] = (BT[t+5] - BT[t-5]) / 10 * 60, or forward/backward difference at boundaries. This gives a smooth RoR curve. Add as a second series in the ECharts config. Use yAxisIndex: 1 for the RoR axis (add a second yAxis to the chart). Phase markers: find the time where interpolated temp crosses 150°C (dry) and target_first_crack (FC). Use ECharts markLine on the temperature series for vertical lines. DTR = (total_time - fc_time) / total_time * 100. Display below chart in a stats bar. The ProfileDesigner currently uses a single yAxis — add a second one for RoR. Make the RoR series non-interactive (silent: true) so it doesn't interfere with point editing."
     },
     {
@@ -96,7 +96,7 @@
         "npm run build succeeds"
       ],
       "priority": 5,
-      "passes": true,
+      "passes": false,
       "notes": "The profile_points table already has a fan_speed column (INTEGER, 0-100). The ProfileDesigner already has a fan_speed input in the table view. This story adds the visual chart representation. Use ECharts step line series: { name: 'Fan Speed', type: 'line', step: 'end', data: sortedPoints.filter(p => p.fan_speed !== null).map(p => [p.time_seconds, p.fan_speed]), yAxisIndex: 1, areaStyle: { opacity: 0.15 }, itemStyle: { color: '#a78bfa' }, silent: true }. The fan speed shares the right Y-axis (0-100 range works for both RoR and fan percentage). Ensure fan_speed null points are excluded from the series data to avoid gaps."
     },
     {
@@ -117,7 +117,7 @@
         "npm run build succeeds"
       ],
       "priority": 6,
-      "passes": true,
+      "passes": false,
       "notes": "Implement as a modal/dialog component that receives the current points array and returns the transformed points array. Artisan supports discrete/linear/quadratic mapping between landmark events — start with simpler linear scale+shift which covers 90% of use cases. The preview chart is a standalone ECharts instance inside the dialog (not the main designer chart). Use the Chart.svelte wrapper. Original points rendered as dashed gray line, transposed as solid amber. On Apply, emit the transformed points back to the parent ProfileDesigner which replaces its points state. The transposer opens in a modal (use a simple backdrop div with z-50, same pattern as other dialogs in the app). Time scaling should clamp minimum to 1 second between points."
     },
     {
@@ -136,7 +136,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 7,
-      "passes": true,
+      "passes": false,
       "notes": "The current RoR calculation in telemetry.ts uses a 30-second window with simple (lastTemp - firstTemp) / dt * 60. Replace with a function that accepts the algorithm name and window size. For Savitzky-Golay, implement a minimal version: given N points (time, temp), fit a polynomial p(t) = a + bt + ct², then RoR = b + 2ct evaluated at the center time, scaled to °C/min. This can be done with a 3x3 matrix solve or precomputed convolution coefficients for uniform spacing (since telemetry is ~1Hz). Load settings once on mount via settings.get() and store in module-level $state variables. The settings page input follows the same pattern as the lookahead setting (PF-010). Keep the settings page clean — group under a 'Rate of Rise' subsection."
     },
     {
@@ -156,7 +156,7 @@
         "npm run build succeeds"
       ],
       "priority": 8,
-      "passes": true,
+      "passes": false,
       "notes": "Enhance the existing PhaseTimingTable or create a new PhaseStatsPanel that replaces it. The component needs two modes: (1) historical mode — receives pre-computed stats from the session object (AP-001 fields), (2) live mode — receives telemetryHistory array and roast events, computes stats in $derived. For live mode, filter telemetryHistory by phase boundaries from events and compute mean(bean_temp delta). Phase colors from Artisan: Drying = #22c55e (green-500), Maillard = #eab308 (yellow-500), Development = #92400e (amber-900/brown). The session detail page at /sessions/[id]/+page.svelte already uses PhaseTimingTable — replace or augment it. DTR = development_time / total_time * 100."
     },
     {
@@ -174,7 +174,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 9,
-      "passes": true,
+      "passes": false,
       "notes": "This is purely a frontend display story. The backend already computes and returns these values (AP-001 and AP-002). Add a new RoastMetrics.svelte component or extend KeyTemperatures.svelte. The session detail page at /sessions/[id]/+page.svelte fetches SessionWithTelemetry which includes the session object with all fields. Use a grid of metric cards similar to KeyTemperatures (bg-card rounded-lg p-3 pattern). Update the TypeScript interfaces in both $lib/types/session.ts and $lib/api/client.ts to include the new optional fields."
     },
     {
@@ -195,7 +195,7 @@
         "npm run build succeeds"
       ],
       "priority": 10,
-      "passes": true,
+      "passes": false,
       "notes": "Create a new route at apps/dashboard/src/routes/sessions/compare/+page.svelte. Pass session IDs via URL query params: /sessions/compare?ids=id1,id2,id3. Load telemetry for each session via sessions.get(). For the chart, create multiple series pairs (BT + RoR) per session, each with a unique color from a predefined palette. For event alignment, find the elapsed_seconds of the chosen event in each session's events array, then subtract that offset from all telemetry elapsed_seconds. Use an ECharts instance with multi-series configuration. The metadata table uses a simple HTML table with Tailwind styling. The color palette should have 5 distinct colors to support up to 5 sessions. The session list page can add checkboxes + a floating 'Compare (N)' button that navigates to /sessions/compare?ids=..."
     },
     {
@@ -214,7 +214,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 11,
-      "passes": true,
+      "passes": false,
       "notes": "Implement as a $effect in a new AutoEventDetector.svelte component (or within the dashboard page). Subscribe to the telemetry store and check conditions on each update. AutoDRY is simple: watch bean_temp cross the threshold. AutoFC is more nuanced — track a rolling 30s RoR average and detect when instantaneous RoR drops below 80% of it for 3 consecutive readings. Use a module-level $state Set to track which events have already been suggested this session (reset on session change). The toast notification can reuse the existing notifications store if one exists, or create a simple floating notification component. Settings loaded on mount via settings.get(). The backend needs the two new default settings seeded."
     },
     {
@@ -235,7 +235,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 12,
-      "passes": true,
+      "passes": false,
       "notes": "Create tables in init_db. SCA scoring uses 0-10 scale with 0.25 increments (10 attributes, max total 100). The POST endpoint should be idempotent for a session — delete existing cupping data and recreate. Service methods: create_cupping(session_id, req), get_cupping(session_id), delete_cupping(session_id). The create method runs in a transaction: DELETE FROM cupping_scores WHERE session_id=?, DELETE FROM cupping_attributes WHERE cupping_id IN (...), then INSERT new data. Return the cupping data as part of get_session_with_telemetry by doing a LEFT JOIN or separate query. Frontend types will be added in the frontend story."
     },
     {
@@ -259,7 +259,7 @@
         "npm run build succeeds"
       ],
       "priority": 13,
-      "passes": true,
+      "passes": false,
       "notes": "ECharts radar chart config: { radar: { indicator: attributes.map(a => ({ name: a.label, max: 10 })), shape: 'polygon' }, series: [{ type: 'radar', data: [{ value: scores }] }] }. Use the Chart.svelte wrapper. SCA attributes with display labels: Fragrance/Aroma, Flavor, Aftertaste, Acidity, Body, Balance, Uniformity, Clean Cup, Sweetness, Overall. Place on the session detail page below the telemetry chart in a collapsible section (use a <details> element or toggle button). The collapsible starts closed. Frontend API client adds a 'cupping' namespace. Load via $effect on mount."
     },
     {
@@ -278,7 +278,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 14,
-      "passes": true,
+      "passes": false,
       "notes": "For CSV: use a simple string builder — no external crate needed. Set Content-Type: text/csv and Content-Disposition: attachment; filename=\"{session_name}_{date}.csv\". For Artisan JSON: the .alog format uses Python-style JSON (single quotes in older versions, but modern Artisan accepts standard JSON). Key fields: 'timex' = [elapsed_seconds array], 'temp1' = [env_temp array], 'temp2' = [bean_temp array], 'timeindex' = [8 integers mapping event positions], 'roastdate' = ISO date string, 'title' = session name, 'beans' = origin info, 'weight' = [green_weight, roasted_weight, unit_string]. The timeindex maps: index 0=CHARGE, 1=DRY, 2=FCs, 3=FCe, 4=SCs, 5=SCe, 6=DROP, 7=COOL. Find the nearest telemetry index for each event's elapsed_seconds. Use -1 for missing events. This completes the import/export round-trip (rustRoast already imports .alog)."
     },
     {
@@ -296,7 +296,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 15,
-      "passes": true,
+      "passes": false,
       "notes": "For browser file downloads, use fetch() to get the response, create a Blob, generate a URL via URL.createObjectURL(), create an anchor element, set href and download attributes, click programmatically, then revoke the URL. The export dropdown can use a simple button group or a native <select> styled with Tailwind. Place alongside the existing 'Delete' and 'Save as Profile' buttons on the session detail page header. Use lucide-svelte icons: Download for the export button. The API endpoints require auth — pass the bearer token in the fetch header (use the existing request() helper from client.ts or add an exportBlob helper)."
     },
     {
@@ -318,7 +318,7 @@
         "npm run build succeeds"
       ],
       "priority": 16,
-      "passes": true,
+      "passes": false,
       "notes": "Store alarms as a JSON array in the settings table under key 'roast_alarms'. This avoids a new DB table and keeps the schema simple. The AlarmMonitor component loads the alarm configuration from settings on mount, then uses $effect to evaluate conditions on each telemetry update. For temp_above: trigger when beanTemp > threshold. For ror_below: trigger when rateOfRise < threshold AND the reference event has been marked. For time_after_event: trigger when elapsed_seconds > event_elapsed + threshold. Use a Set<string> to track fired alarm names per session. The toast notification system can be a simple fixed-position div at the top of the screen with auto-dismiss (5 seconds). For audio: new AudioContext(), create a short oscillator beep (440Hz, 200ms). The settings page alarm table uses inline editing with Tailwind-styled inputs."
     }
   ]
