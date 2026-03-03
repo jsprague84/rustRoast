@@ -8,6 +8,8 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
 - `RoastSession` model uses `#[derive(FromRow)]` — fields MUST match column order/names in `roast_sessions` table
 - Frontend types: `RoastSession` interface is in `$lib/api/client.ts`, `SessionWithTelemetry` extends it in `$lib/types/session.ts`
 - `query_as::<_, RoastSession>` with `RETURNING *` requires all model fields to have matching DB columns
+- Chart.svelte uses tree-shaken ECharts — must register new components (e.g., LegendComponent) and add to ECOption type union
+- ECharts markLine label.position requires literal type, not plain `string`
 
 ---
 
@@ -50,4 +52,18 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
 - **Learnings for future iterations:**
   - Settings-only stories are minimal: just INSERT OR IGNORE in init_db + mirror in setup_test_db
   - Supported algorithms (moving_average, weighted_moving_average, savitzky_golay) are just string values — no backend validation
+---
+
+## 2026-03-02 - AP-004
+- Added simulated RoR curve, phase markers, and DTR preview to ProfileDesigner
+- Files changed:
+  - `apps/dashboard/src/lib/components/Chart.svelte` — registered LegendComponent for ECharts legend support
+  - `apps/dashboard/src/lib/components/ProfileDesigner.svelte` — added interpolateTemp(), computeRoR(), findTempCrossing() helpers; dual Y-axis (temp + RoR); Simulated RoR series (green dashed); DRY/FC markLine phase markers; DTR info bar below chart
+- **Learnings for future iterations:**
+  - ECharts markLine `label.position` must be a specific literal type (e.g., `'insideEndTop'`), not just `string` — use `as const` or inline type
+  - Chart.svelte ECOption type is a ComposeOption — add new component options to the union when registering new ECharts components
+  - `yAxis` can be an array for dual-axis charts; second series uses `yAxisIndex: 1`
+  - RoR simulation uses central difference: `(BT[t+dt] - BT[t-dt]) / (2*dt) * 60` for °C/min
+  - `grid.right` must be increased (20→55) to make room for the second Y-axis labels
+  - `silent: true` on a series prevents it from capturing mouse events (critical for the draggable point overlay)
 ---

@@ -6,6 +6,7 @@
 		GridComponent,
 		TitleComponent,
 		TooltipComponent,
+		LegendComponent,
 		MarkLineComponent,
 		GraphicComponent
 	} from 'echarts/components';
@@ -16,6 +17,7 @@
 		GridComponentOption,
 		TitleComponentOption,
 		TooltipComponentOption,
+		LegendComponentOption,
 		MarkLineComponentOption,
 		GraphicComponentOption
 	} from 'echarts/components';
@@ -25,11 +27,12 @@
 		| GridComponentOption
 		| TitleComponentOption
 		| TooltipComponentOption
+		| LegendComponentOption
 		| MarkLineComponentOption
 		| GraphicComponentOption
 	>;
 
-	echarts.use([LineChart, GridComponent, TitleComponent, TooltipComponent, MarkLineComponent, GraphicComponent, CanvasRenderer]);
+	echarts.use([LineChart, GridComponent, TitleComponent, TooltipComponent, LegendComponent, MarkLineComponent, GraphicComponent, CanvasRenderer]);
 
 	let { option = $bindable<ECOption>({}) }: { option: ECOption } = $props();
 

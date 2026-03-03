@@ -76,7 +76,7 @@
         "npm run build succeeds"
       ],
       "priority": 4,
-      "passes": false,
+      "passes": true,
       "notes": "The RoR simulation is a pure computation from the profile points — no backend needed. Algorithm: (1) sort points by time_seconds, (2) for each 5-second interval from 0 to max_time, interpolate BT using linear interpolation between surrounding points (reuse interpolateTarget from profile.svelte.ts), (3) compute central difference derivative: RoR[t] = (BT[t+5] - BT[t-5]) / 10 * 60, or forward/backward difference at boundaries. This gives a smooth RoR curve. Add as a second series in the ECharts config. Use yAxisIndex: 1 for the RoR axis (add a second yAxis to the chart). Phase markers: find the time where interpolated temp crosses 150°C (dry) and target_first_crack (FC). Use ECharts markLine on the temperature series for vertical lines. DTR = (total_time - fc_time) / total_time * 100. Display below chart in a stats bar. The ProfileDesigner currently uses a single yAxis — add a second one for RoR. Make the RoR series non-interactive (silent: true) so it doesn't interfere with point editing."
     },
     {

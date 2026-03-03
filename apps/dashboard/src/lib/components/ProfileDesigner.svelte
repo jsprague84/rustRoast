@@ -177,6 +177,68 @@
 		});
 	}
 
+	// Interpolate temperature at a given time (seconds) from sorted points
+	function interpolateTemp(sorted: DesignerPoint[], t: number): number | null {
+		if (sorted.length === 0) return null;
+		if (t <= sorted[0].time_seconds) return sorted[0].target_temp;
+		if (t >= sorted[sorted.length - 1].time_seconds) return sorted[sorted.length - 1].target_temp;
+		for (let i = 0; i < sorted.length - 1; i++) {
+			const p0 = sorted[i];
+			const p1 = sorted[i + 1];
+			if (t >= p0.time_seconds && t <= p1.time_seconds) {
+				const frac = (t - p0.time_seconds) / (p1.time_seconds - p0.time_seconds);
+				return p0.target_temp + frac * (p1.target_temp - p0.target_temp);
+			}
+		}
+		return null;
+	}
+
+	// Compute simulated RoR data at 5-second intervals using central difference
+	function computeRoR(sorted: DesignerPoint[]): [number, number][] {
+		if (sorted.length < 2) return [];
+		const maxTime = sorted[sorted.length - 1].time_seconds;
+		const result: [number, number][] = [];
+		const dt = 5;
+		for (let t = 0; t <= maxTime; t += dt) {
+			const tBefore = interpolateTemp(sorted, t - dt);
+			const tAfter = interpolateTemp(sorted, t + dt);
+			if (tBefore !== null && tAfter !== null) {
+				const ror = ((tAfter - tBefore) / (2 * dt)) * 60; // °C/min
+				result.push([t, Math.round(ror * 10) / 10]);
+			}
+		}
+		return result;
+	}
+
+	// Find time (seconds) where interpolated temp crosses a threshold
+	function findTempCrossing(sorted: DesignerPoint[], threshold: number): number | null {
+		if (sorted.length < 2) return null;
+		for (let i = 0; i < sorted.length - 1; i++) {
+			const p0 = sorted[i];
+			const p1 = sorted[i + 1];
+			if (p0.target_temp <= threshold && p1.target_temp >= threshold) {
+				const frac = (threshold - p0.target_temp) / (p1.target_temp - p0.target_temp);
+				return Math.round(p0.time_seconds + frac * (p1.time_seconds - p0.time_seconds));
+			}
+		}
+		return null;
+	}
+
+	// Phase temperature thresholds
+	const DRY_TEMP = 150;
+	const FC_TEMP = 200;
+
+	// Derived DTR preview
+	let dtrInfo = $derived.by(() => {
+		const sorted = sortedPoints();
+		if (sorted.length < 2) return null;
+		const totalTime = sorted[sorted.length - 1].time_seconds;
+		const fcTime = findTempCrossing(sorted, FC_TEMP);
+		if (fcTime === null || totalTime <= 0) return null;
+		const dtr = ((totalTime - fcTime) / totalTime) * 100;
+		return { dtr: Math.round(dtr * 10) / 10, fcTime, totalTime };
+	});
+
 	// Chart options — includes graphic overlay for draggable points
 	let chartOption = $derived.by<ECOption>(() => {
 		const sorted = sortedPoints();
@@ -187,6 +249,32 @@
 		const xRange = axisRange(times, 720, 30); // default 12 min for empty chart
 		const yRange = axisRange(temps, 250, 20);  // default 250°C for empty chart
 
+		// Compute simulated RoR
+		const rorData = computeRoR(sorted);
+		const rorValues = rorData.map(([, v]) => v);
+		const rorMax = rorValues.length > 0 ? Math.max(...rorValues, 5) : 30;
+		const rorMin = rorValues.length > 0 ? Math.min(...rorValues, 0) : 0;
+
+		// Phase markers (vertical dashed lines)
+		const dryTime = findTempCrossing(sorted, DRY_TEMP);
+		const fcTime = findTempCrossing(sorted, FC_TEMP);
+
+		const markLineData: { xAxis: number; label?: { formatter: string; position: 'insideEndTop' }; lineStyle?: { color: string } }[] = [];
+		if (dryTime !== null) {
+			markLineData.push({
+				xAxis: dryTime,
+				label: { formatter: 'DRY', position: 'insideEndTop' },
+				lineStyle: { color: '#22c55e' }
+			});
+		}
+		if (fcTime !== null) {
+			markLineData.push({
+				xAxis: fcTime,
+				label: { formatter: 'FC', position: 'insideEndTop' },
+				lineStyle: { color: '#eab308' }
+			});
+		}
+
 		// Build graphic overlays (draggable handles).
 		// Access chartReady to re-run this derivation after the chart instance is initialized.
 		const instance = chartReady ? chartComponent?.getInstance() : null;
@@ -194,16 +282,22 @@
 
 		return {
 			animation: false,
-			grid: { left: 55, right: 20, top: 30, bottom: 45 },
+			grid: { left: 55, right: 55, top: 40, bottom: 45 },
+			legend: {
+				show: true,
+				top: 5,
+				textStyle: { color: '#9ca3af', fontSize: 11 }
+			},
 			tooltip: {
 				trigger: 'item',
 				formatter: (params: unknown) => {
-					const p = params as { data?: number[] };
+					const p = params as { data?: number[]; seriesName?: string };
 					if (!p.data) return '';
-					const [t, temp] = p.data;
+					const [t, val] = p.data;
 					const m = Math.floor(t / 60);
 					const s = Math.round(t % 60);
-					return `Time: ${m}:${s.toString().padStart(2, '0')}<br/>Temp: ${temp}°C`;
+					const unit = p.seriesName === 'Simulated RoR' ? '°C/min' : '°C';
+					return `Time: ${m}:${s.toString().padStart(2, '0')}<br/>${p.seriesName}: ${val}${unit}`;
 				}
 			},
 			xAxis: {
@@ -223,16 +317,28 @@
 				axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
 				splitLine: { show: false }
 			},
-			yAxis: {
-				type: 'value',
-				name: 'Temp (°C)',
-				min: yRange.min,
-				max: yRange.max,
-				nameTextStyle: { color: '#9ca3af' },
-				axisLabel: { color: '#9ca3af' },
-				axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
-				splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } }
-			},
+			yAxis: [
+				{
+					type: 'value',
+					name: 'Temp (°C)',
+					min: yRange.min,
+					max: yRange.max,
+					nameTextStyle: { color: '#9ca3af' },
+					axisLabel: { color: '#9ca3af' },
+					axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
+					splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } }
+				},
+				{
+					type: 'value',
+					name: 'RoR (°C/min)',
+					min: Math.floor(rorMin),
+					max: Math.ceil(rorMax + 2),
+					nameTextStyle: { color: '#34d399' },
+					axisLabel: { color: '#34d399' },
+					axisLine: { lineStyle: { color: '#34d399' } },
+					splitLine: { show: false }
+				}
+			],
 			series: [
 				{
 					id: 'profile',
@@ -242,7 +348,26 @@
 					itemStyle: { color: '#f59e0b' },
 					lineStyle: { width: 2 },
 					showSymbol: false,
-					symbolSize: 0
+					symbolSize: 0,
+					markLine: markLineData.length > 0 ? {
+						silent: true,
+						symbol: 'none',
+						lineStyle: { type: 'dashed', width: 1 },
+						label: { color: '#9ca3af', fontSize: 10 },
+						data: markLineData
+					} : undefined
+				},
+				{
+					id: 'ror',
+					name: 'Simulated RoR',
+					type: 'line',
+					data: rorData,
+					yAxisIndex: 1,
+					itemStyle: { color: '#34d399' },
+					lineStyle: { width: 1.5, type: 'dashed', color: '#34d399' },
+					showSymbol: false,
+					symbolSize: 0,
+					silent: true
 				}
 			],
 			graphic: graphicElements
@@ -403,6 +528,13 @@
 			<div style="height: 350px;">
 				<Chart bind:this={chartComponent} option={chartOption} />
 			</div>
+			{#if dtrInfo}
+				<div class="mt-2 flex items-center gap-4 rounded border border-border/50 bg-card/50 px-3 py-1.5 text-xs text-muted-foreground">
+					<span class="font-medium text-amber-400">Est. DTR: {dtrInfo.dtr}%</span>
+					<span>FC at {Math.floor(dtrInfo.fcTime / 60)}:{(dtrInfo.fcTime % 60).toString().padStart(2, '0')}</span>
+					<span>Total: {Math.floor(dtrInfo.totalTime / 60)}:{(dtrInfo.totalTime % 60).toString().padStart(2, '0')}</span>
+				</div>
+			{/if}
 		{:else}
 			<!-- Table view -->
 			{#if points.length === 0}
