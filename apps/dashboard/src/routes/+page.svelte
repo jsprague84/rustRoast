@@ -9,6 +9,7 @@
 	import AutotuneDashboardWidget from '$lib/components/AutotuneDashboardWidget.svelte';
 	import EmergencyStop from '$lib/components/EmergencyStop.svelte';
 	import DeviceSelector from '$lib/components/DeviceSelector.svelte';
+	import PhaseStatsPanel from '$lib/components/PhaseStatsPanel.svelte';
 	import { setSelectedDevice, deviceId, telemetry } from '$lib/stores/telemetry.js';
 	import { events, type RoastSession, type RoastEvent } from '$lib/api/client.js';
 	import {
@@ -37,6 +38,7 @@
 
 	let activeSession = $state<RoastSession | null>(null);
 	let landmarks = $state<Array<{ type: string; elapsed_seconds: number; temperature?: number }>>([]);
+	let sessionEvents = $state<RoastEvent[]>([]);
 	let showControls = $state(false);
 	let selectedDeviceId = $state<string | null>(null);
 
@@ -46,12 +48,14 @@
 			loadLandmarks(activeSession.id);
 		} else {
 			landmarks = [];
+			sessionEvents = [];
 		}
 	});
 
 	async function loadLandmarks(sessionId: string) {
 		try {
 			const evts = await events.list(sessionId);
+			sessionEvents = evts;
 			landmarks = evts.map((e: RoastEvent) => ({
 				type: e.event_type,
 				elapsed_seconds: e.elapsed_seconds,
@@ -59,6 +63,7 @@
 			}));
 		} catch {
 			landmarks = [];
+			sessionEvents = [];
 		}
 	}
 
@@ -124,6 +129,9 @@
 		<SessionControls onchange={onSessionChange} />
 		<FollowProfile {activeSession} deviceId={selectedDeviceId} />
 		<LandmarkPanel {activeSession} />
+		{#if activeSession && sessionEvents.length > 0}
+			<PhaseStatsPanel events={sessionEvents} totalTimeSeconds={activeSession.total_time_seconds ?? null} />
+		{/if}
 
 		<!-- Controls toggle (mobile) -->
 		<button

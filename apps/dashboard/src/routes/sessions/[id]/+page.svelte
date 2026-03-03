@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import Chart, { type ECOption } from '$lib/components/Chart.svelte';
 	import KeyTemperatures from '$lib/components/KeyTemperatures.svelte';
-	import PhaseTimingTable from '$lib/components/PhaseTimingTable.svelte';
+	import PhaseStatsPanel from '$lib/components/PhaseStatsPanel.svelte';
 	import { landmarkColors, landmarkLabels } from '$lib/constants/landmarks.js';
 	import type { SessionTelemetryPoint } from '$lib/types/session.js';
 	import { sessions } from '$lib/api/client.js';
@@ -213,6 +213,12 @@
 		<!-- Key Temperatures -->
 		<KeyTemperatures telemetry={sessionData.telemetry ?? []} events={sessionEvents} />
 
-		<!-- Phase Timing -->
-		<PhaseTimingTable events={sessionEvents} totalTimeSeconds={sessionData.total_time_seconds ?? null} />
+		<!-- Phase Statistics -->
+		<PhaseStatsPanel
+			events={sessionEvents}
+			totalTimeSeconds={sessionData.total_time_seconds ?? null}
+			avgRorDrying={sessionData.avg_ror_drying}
+			avgRorMaillard={sessionData.avg_ror_maillard}
+			avgRorDevelopment={sessionData.avg_ror_development}
+		/>
 	</div>

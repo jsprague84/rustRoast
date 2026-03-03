@@ -156,7 +156,7 @@
         "npm run build succeeds"
       ],
       "priority": 8,
-      "passes": false,
+      "passes": true,
       "notes": "Enhance the existing PhaseTimingTable or create a new PhaseStatsPanel that replaces it. The component needs two modes: (1) historical mode — receives pre-computed stats from the session object (AP-001 fields), (2) live mode — receives telemetryHistory array and roast events, computes stats in $derived. For live mode, filter telemetryHistory by phase boundaries from events and compute mean(bean_temp delta). Phase colors from Artisan: Drying = #22c55e (green-500), Maillard = #eab308 (yellow-500), Development = #92400e (amber-900/brown). The session detail page at /sessions/[id]/+page.svelte already uses PhaseTimingTable — replace or augment it. DTR = development_time / total_time * 100."
     },
     {
