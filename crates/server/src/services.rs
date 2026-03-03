@@ -975,6 +975,175 @@ impl RoastSessionService {
             .await?;
         Ok(())
     }
+
+    // ---- Data Export (AP-014) ----
+
+    pub async fn export_csv(&self, id: &str) -> Result<Option<(String, String)>> {
+        let session = match self.get_session(id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let telemetry = self.get_session_telemetry(id).await?;
+        let profile_name = if let Some(pid) = &session.profile_id {
+            self.get_profile_with_points(pid)
+                .await?
+                .map(|p| p.profile.name)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let mut csv = String::new();
+        csv.push_str(&format!("# Session: {}\n", session.name));
+        if let Some(ref st) = session.start_time {
+            csv.push_str(&format!("# Date: {}\n", st));
+        }
+        if let Some(ref origin) = session.bean_origin {
+            let variety = session.bean_variety.as_deref().unwrap_or("");
+            if variety.is_empty() {
+                csv.push_str(&format!("# Bean: {}\n", origin));
+            } else {
+                csv.push_str(&format!("# Bean: {} ({})\n", origin, variety));
+            }
+        }
+        if !profile_name.is_empty() {
+            csv.push_str(&format!("# Profile: {}\n", profile_name));
+        }
+
+        csv.push_str(
+            "elapsed_seconds,bean_temp,env_temp,rate_of_rise,heater_pwm,fan_pwm,setpoint\n",
+        );
+        for t in &telemetry {
+            csv.push_str(&format!(
+                "{},{},{},{},{},{},{}\n",
+                t.elapsed_seconds,
+                t.bean_temp.map(|v| v.to_string()).unwrap_or_default(),
+                t.env_temp.map(|v| v.to_string()).unwrap_or_default(),
+                t.rate_of_rise.map(|v| v.to_string()).unwrap_or_default(),
+                t.heater_pwm.map(|v| v.to_string()).unwrap_or_default(),
+                t.fan_pwm.map(|v| v.to_string()).unwrap_or_default(),
+                t.setpoint.map(|v| v.to_string()).unwrap_or_default(),
+            ));
+        }
+
+        let date_str = session
+            .start_time
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| session.created_at.format("%Y-%m-%d").to_string());
+        let filename = format!(
+            "{}_{}.csv",
+            session.name.replace(' ', "_"),
+            date_str
+        );
+
+        Ok(Some((csv, filename)))
+    }
+
+    pub async fn export_artisan_json(
+        &self,
+        id: &str,
+    ) -> Result<Option<(serde_json::Value, String)>> {
+        let session = match self.get_session(id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let telemetry = self.get_session_telemetry(id).await?;
+        let events = self.get_roast_events(id).await?;
+
+        let timex: Vec<f64> = telemetry.iter().map(|t| t.elapsed_seconds as f64).collect();
+        let temp1: Vec<f64> = telemetry
+            .iter()
+            .map(|t| t.env_temp.unwrap_or(-1.0) as f64)
+            .collect();
+        let temp2: Vec<f64> = telemetry
+            .iter()
+            .map(|t| t.bean_temp.unwrap_or(-1.0) as f64)
+            .collect();
+
+        // Build timeindex: [CHARGE, DRY, FCs, FCe, SCs, SCe, DROP, COOL]
+        let event_map = [
+            "drop",               // CHARGE (first event at t=0)
+            "drying_end",         // DRY
+            "first_crack_start",  // FCs
+            "first_crack_end",    // FCe
+            "second_crack_start", // SCs
+            "second_crack_end",   // SCe
+            "drop_out",           // DROP
+        ];
+
+        // CHARGE is index 0 in telemetry (first reading)
+        let charge_idx: i64 = if !timex.is_empty() { 0 } else { -1 };
+
+        let mut timeindex: Vec<i64> = vec![charge_idx];
+        for event_type in &event_map[1..] {
+            let idx = events
+                .iter()
+                .find(|e| e.event_type.to_string() == *event_type)
+                .and_then(|e| {
+                    // Find nearest telemetry index
+                    timex
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, &t)| {
+                            ((t - e.elapsed_seconds as f64) * 1000.0).abs() as i64
+                        })
+                        .map(|(i, _)| i as i64)
+                })
+                .unwrap_or(-1);
+            timeindex.push(idx);
+        }
+        // COOL (index 7) — not tracked, use -1
+        timeindex.push(-1);
+
+        // Build specialevents
+        let specialevents: Vec<serde_json::Value> = events
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "type": e.event_type.to_string(),
+                    "time": e.elapsed_seconds,
+                    "temperature": e.temperature,
+                    "notes": e.notes,
+                })
+            })
+            .collect();
+
+        let roastdate = session
+            .start_time
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| session.created_at.to_rfc3339());
+
+        let weight: Vec<serde_json::Value> = vec![
+            serde_json::json!(session.green_weight.unwrap_or(0.0)),
+            serde_json::json!(session.roasted_weight.unwrap_or(0.0)),
+            serde_json::json!("g"),
+        ];
+
+        let alog = serde_json::json!({
+            "version": "2",
+            "title": session.name,
+            "roastdate": roastdate,
+            "beans": session.bean_origin.unwrap_or_default(),
+            "weight": weight,
+            "timex": timex,
+            "temp1": temp1,
+            "temp2": temp2,
+            "timeindex": timeindex,
+            "specialevents": specialevents,
+        });
+
+        let date_str = session
+            .start_time
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| session.created_at.format("%Y-%m-%d").to_string());
+        let filename = format!(
+            "{}_{}.alog",
+            session.name.replace(' ', "_"),
+            date_str
+        );
+
+        Ok(Some((alog, filename)))
+    }
 }
 
 // Artisan Profile Parser
@@ -2652,5 +2821,100 @@ mod tests {
         service.delete_cupping(&session.id).await.unwrap();
         let gone = service.get_cupping(&session.id).await.unwrap();
         assert!(gone.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_export_csv_and_artisan() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create a session with metadata
+        let session = service
+            .create_session(CreateSessionRequest {
+                name: "Export Test".to_string(),
+                device_id: "esp32-001".to_string(),
+                profile_id: None,
+                bean_origin: Some("Colombia".to_string()),
+                bean_variety: Some("Caturra".to_string()),
+                green_weight: Some(200.0),
+                target_roast_level: None,
+                notes: None,
+                ambient_temp: None,
+                humidity: None,
+            })
+            .await
+            .unwrap();
+
+        // Start session
+        service.start_session(&session.id).await.unwrap();
+
+        // Add telemetry
+        for i in 0..5 {
+            let elapsed = i as f32 * 60.0;
+            let bt = 100.0 + i as f32 * 20.0;
+            let et = bt + 30.0;
+            service
+                .add_telemetry_point(
+                    &session.id,
+                    elapsed,
+                    Some(bt),
+                    Some(et),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        // Add an event
+        service
+            .create_roast_event(
+                &session.id,
+                CreateRoastEventRequest {
+                    event_type: RoastEventType::FirstCrackStart,
+                    elapsed_seconds: 180.0,
+                    temperature: Some(180.0),
+                    notes: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Test CSV export
+        let (csv, csv_filename) = service.export_csv(&session.id).await.unwrap().unwrap();
+        assert!(csv_filename.starts_with("Export_Test_"));
+        assert!(csv_filename.ends_with(".csv"));
+        assert!(csv.contains("# Session: Export Test"));
+        assert!(csv.contains("# Bean: Colombia (Caturra)"));
+        assert!(csv.contains("elapsed_seconds,bean_temp,env_temp"));
+        // Check we have data rows (header + 5 telemetry points)
+        let data_lines: Vec<&str> = csv.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(data_lines.len(), 6); // 1 header + 5 data rows
+
+        // Test Artisan JSON export
+        let (alog, alog_filename) = service
+            .export_artisan_json(&session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(alog_filename.starts_with("Export_Test_"));
+        assert!(alog_filename.ends_with(".alog"));
+        assert_eq!(alog["title"], "Export Test");
+        assert_eq!(alog["beans"], "Colombia");
+        let timex = alog["timex"].as_array().unwrap();
+        assert_eq!(timex.len(), 5);
+        let temp2 = alog["temp2"].as_array().unwrap();
+        assert_eq!(temp2.len(), 5);
+        // First BT should be 100.0
+        assert!((temp2[0].as_f64().unwrap() - 100.0).abs() < 0.1);
+        // timeindex should have FCs mapped
+        let timeindex = alog["timeindex"].as_array().unwrap();
+        assert_eq!(timeindex.len(), 8);
+        // CHARGE at index 0
+        assert_eq!(timeindex[0], 0);
+        // FCs should be at index 3 in telemetry (180s is closest to 180.0)
+        assert_eq!(timeindex[2], 3);
     }
 }

@@ -278,7 +278,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "notes": "For CSV: use a simple string builder — no external crate needed. Set Content-Type: text/csv and Content-Disposition: attachment; filename=\"{session_name}_{date}.csv\". For Artisan JSON: the .alog format uses Python-style JSON (single quotes in older versions, but modern Artisan accepts standard JSON). Key fields: 'timex' = [elapsed_seconds array], 'temp1' = [env_temp array], 'temp2' = [bean_temp array], 'timeindex' = [8 integers mapping event positions], 'roastdate' = ISO date string, 'title' = session name, 'beans' = origin info, 'weight' = [green_weight, roasted_weight, unit_string]. The timeindex maps: index 0=CHARGE, 1=DRY, 2=FCs, 3=FCe, 4=SCs, 5=SCe, 6=DROP, 7=COOL. Find the nearest telemetry index for each event's elapsed_seconds. Use -1 for missing events. This completes the import/export round-trip (rustRoast already imports .alog)."
     },
     {

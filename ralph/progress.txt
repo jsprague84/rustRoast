@@ -190,3 +190,17 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - `<details>` element provides native collapsible behavior — no need for custom toggle state
   - The cupping API client (from AP-012) handles frontend types already; no new types needed
 ---
+
+## 2026-03-02 - AP-014
+- Added session data export endpoints for CSV and Artisan JSON (.alog) formats
+- Files changed:
+  - `crates/server/src/services.rs` — added export_csv() and export_artisan_json() methods to RoastSessionService; added test_export_csv_and_artisan test
+  - `crates/server/src/main.rs` — added api_export_csv and api_export_artisan handlers; registered 2 export routes
+- **Learnings for future iterations:**
+  - Use `get_profile_with_points()` not `get_profile()` — the latter is on DeviceService for device profiles, not roast profiles
+  - Artisan .alog timeindex format: [CHARGE, DRY, FCs, FCe, SCs, SCe, DROP, COOL] — 8 integers mapping event positions to telemetry indices, -1 for missing
+  - CSV Content-Disposition: `attachment; filename="..."` triggers browser download
+  - Clippy catches `vec_init_then_push` — use `vec![]` macro instead of Vec::new() + push()
+  - CHARGE is always index 0 in the telemetry array (first reading)
+  - Event-to-index mapping: find nearest telemetry point by elapsed_seconds proximity
+---
