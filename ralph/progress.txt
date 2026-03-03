@@ -78,3 +78,16 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - When sharing a Y-axis between RoR and fan speed, fix the range to 0-100 (fan percentage) since RoR values (5-25) still display fine in that range
   - Only render fan speed series when there are non-null fan_speed points to avoid empty legend entries
 ---
+
+## 2026-03-02 - AP-006
+- Added profile transposer dialog for scaling/shifting profile curves
+- Files changed:
+  - `apps/dashboard/src/lib/components/ProfileTransposer.svelte` (new) — modal dialog with time scale, temp shift, temp scale sliders; preview chart showing original vs transposed curves with simulated RoR
+  - `apps/dashboard/src/lib/components/ProfileDesigner.svelte` — added Transpose button (ArrowRightLeft icon, visible when ≥2 points), ProfileTransposer import, showTransposer state, onApply callback that replaces points array
+- **Learnings for future iterations:**
+  - Modal pattern: fixed inset-0 z-50 div with bg-black/60 backdrop, onclick on backdrop to close
+  - `$derived.by()` works well for computing transposed points reactively from slider state
+  - `computeSimpleRoR()` in transposer uses forward-difference (simpler than central-difference in designer) — both approaches are valid for preview
+  - The onApply callback maps TransposerPoint[] back to DesignerPoint[] to ensure type compatibility
+  - Show transpose button conditionally (≥2 points) since transposing a single point is meaningless
+---
