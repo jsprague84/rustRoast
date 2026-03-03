@@ -3,8 +3,9 @@
 	import Chart, { type ECOption } from '$lib/components/Chart.svelte';
 	import { profiles, type CreateProfileRequest, type ProfileWithPoints } from '$lib/api/client.js';
 	import { notifications } from '$lib/stores/notifications.js';
-	import { Trash2, Table, LineChart } from 'lucide-svelte';
+	import { Trash2, Table, LineChart, ArrowRightLeft } from 'lucide-svelte';
 	import type { GraphicComponentOption } from 'echarts/components';
+	import ProfileTransposer from '$lib/components/ProfileTransposer.svelte';
 
 	interface DesignerPoint {
 		time_seconds: number;
@@ -46,6 +47,7 @@
 	let saving = $state(false);
 	let dragging = $state(false);
 	let chartReady = $state(false);
+	let showTransposer = $state(false);
 
 	let chartComponent: ReturnType<typeof Chart> | undefined = $state();
 
@@ -535,6 +537,15 @@
 				>
 					<Table class="h-4 w-4" />
 				</button>
+				{#if points.length >= 2}
+					<button
+						onclick={() => (showTransposer = true)}
+						class="rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+						title="Transpose profile"
+					>
+						<ArrowRightLeft class="h-4 w-4" />
+					</button>
+				{/if}
 				{#if selectedIndex !== null}
 					<button
 						onclick={deleteSelected}
@@ -685,3 +696,19 @@
 		</div>
 	{/if}
 </div>
+
+{#if showTransposer}
+	<ProfileTransposer
+		points={sortedPoints()}
+		onApply={(transformed) => {
+			points = transformed.map((p) => ({
+				time_seconds: p.time_seconds,
+				target_temp: p.target_temp,
+				fan_speed: p.fan_speed
+			}));
+			selectedIndex = null;
+			showTransposer = false;
+		}}
+		onCancel={() => (showTransposer = false)}
+	/>
+{/if}

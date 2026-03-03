@@ -117,7 +117,7 @@
         "npm run build succeeds"
       ],
       "priority": 6,
-      "passes": false,
+      "passes": true,
       "notes": "Implement as a modal/dialog component that receives the current points array and returns the transformed points array. Artisan supports discrete/linear/quadratic mapping between landmark events — start with simpler linear scale+shift which covers 90% of use cases. The preview chart is a standalone ECharts instance inside the dialog (not the main designer chart). Use the Chart.svelte wrapper. Original points rendered as dashed gray line, transposed as solid amber. On Apply, emit the transformed points back to the parent ProfileDesigner which replaces its points state. The transposer opens in a modal (use a simple backdrop div with z-50, same pattern as other dialogs in the app). Time scaling should clamp minimum to 1 second between points."
     },
     {
