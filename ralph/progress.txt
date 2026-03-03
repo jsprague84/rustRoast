@@ -91,3 +91,17 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - The onApply callback maps TransposerPoint[] back to DesignerPoint[] to ensure type compatibility
   - Show transpose button conditionally (≥2 points) since transposing a single point is meaningless
 ---
+
+## 2026-03-02 - AP-007
+- Added configurable RoR smoothing with 3 algorithms and adjustable window size
+- Files changed:
+  - `apps/dashboard/src/lib/stores/telemetry.ts` — added _rorWindowMs/_rorAlgorithm writable stores; implemented rorMovingAverage, rorWeightedMovingAverage, rorSavitzkyGolay functions; rateOfRise now derives from [_history, _rorWindowMs, _rorAlgorithm]; exported setRorConfig(), loadRorSettings()
+  - `apps/dashboard/src/routes/+layout.svelte` — calls loadRorSettings() on mount
+  - `apps/dashboard/src/routes/settings/+page.svelte` — added Rate of Rise section with window size slider and algorithm dropdown
+- **Learnings for future iterations:**
+  - svelte/store `derived` can take an array of stores: `derived([storeA, storeB], ([$a, $b], set) => ...)`
+  - Weighted moving average uses weighted linear regression: w[i] = (i+1)/sum(1..n), then weighted least-squares slope
+  - Savitzky-Golay: center time around midpoint for numerical stability; derivative at t=0 is just the `b` coefficient from y = a + bt + ct²
+  - Cramer's rule works for the 3x3 normal equations — no need for a full matrix library
+  - Import from $lib/api/client.js in telemetry.ts is safe (no circular dependency)
+---
