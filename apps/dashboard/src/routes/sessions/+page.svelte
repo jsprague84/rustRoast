@@ -7,6 +7,7 @@
 	let { data }: PageProps = $props();
 	// svelte-ignore state_referenced_locally
 	let sessionList = $state(data.sessions);
+	let selectedIds = $state<Set<string>>(new Set());
 
 	function formatDate(iso: string): string {
 		return new Date(iso).toLocaleDateString(undefined, {
@@ -44,7 +45,17 @@
 </svelte:head>
 
 <div>
-	<h1 class="text-2xl font-bold text-foreground">Sessions</h1>
+	<div class="flex items-center justify-between">
+		<h1 class="text-2xl font-bold text-foreground">Sessions</h1>
+		{#if selectedIds.size >= 2}
+			<button
+				onclick={() => goto(`/sessions/compare?ids=${[...selectedIds].join(',')}`)}
+				class="rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
+			>
+				Compare ({selectedIds.size})
+			</button>
+		{/if}
+	</div>
 
 	{#if sessionList.length === 0}
 		<div class="mt-8 text-center">
@@ -56,6 +67,7 @@
 			<table class="min-w-full divide-y divide-border">
 				<thead class="bg-muted">
 					<tr>
+						<th class="w-10 px-4 py-3"></th>
 						<th class="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Date</th>
 						<th class="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Name</th>
 						<th class="px-4 py-3 text-left text-xs font-medium uppercase text-muted-foreground">Bean</th>
@@ -67,6 +79,19 @@
 				<tbody class="divide-y divide-border">
 					{#each sessionList as session}
 						<tr class="cursor-pointer hover:bg-accent" onclick={() => goto(`/sessions/${session.id}`)}>
+							<td class="px-4 py-3" onclick={(e) => e.stopPropagation()}>
+								<input
+									type="checkbox"
+									checked={selectedIds.has(session.id)}
+									onchange={() => {
+										const next = new Set(selectedIds);
+										if (next.has(session.id)) next.delete(session.id);
+										else next.add(session.id);
+										selectedIds = next;
+									}}
+									class="h-4 w-4 rounded border-border"
+								/>
+							</td>
 							<td class="px-4 py-3 text-sm text-foreground">{formatDate(session.created_at)}</td>
 							<td class="px-4 py-3 text-sm text-foreground">{session.name}</td>
 							<td class="px-4 py-3 text-sm text-muted-foreground">
