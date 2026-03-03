@@ -232,7 +232,7 @@
 		</div>
 
 		<!-- Preview chart -->
-		<div style="height: 250px;" class="mb-4">
+		<div style="height: 300px;" class="mb-4">
 			<Chart option={chartOption} />
 		</div>
 
