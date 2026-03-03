@@ -329,6 +329,19 @@ async fn main() {
             get(api_get_session_telemetry),
         )
         .route("/api/sessions/:id/telemetry", post(api_add_telemetry_point))
+        // Cupping Notes API (AP-012)
+        .route(
+            "/api/sessions/:session_id/cupping",
+            get(api_get_cupping),
+        )
+        .route(
+            "/api/sessions/:session_id/cupping",
+            post(api_create_cupping),
+        )
+        .route(
+            "/api/sessions/:session_id/cupping",
+            delete(api_delete_cupping),
+        )
         // Roast Events API
         .route(
             "/api/sessions/:session_id/events",
@@ -1673,6 +1686,7 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
         include_str!("../migrations/003_device_configuration.sql"),
         include_str!("../migrations/004_session_statistics.sql"),
         include_str!("../migrations/005_auc_value.sql"),
+        include_str!("../migrations/006_cupping_scores.sql"),
     ];
     for migration_sql in migrations {
         for statement in migration_sql.split(';') {
@@ -2196,6 +2210,61 @@ async fn api_delete_roast_event(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to delete roast event",
+            )
+                .into_response()
+        }
+    }
+}
+
+// ---- Cupping Notes API (AP-012) ----
+
+async fn api_get_cupping(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Response {
+    match state.session_service.get_cupping(&session_id).await {
+        Ok(Some(cupping)) => Json(serde_json::to_value(cupping).unwrap()).into_response(),
+        Ok(None) => Json(serde_json::Value::Null).into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to get cupping");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get cupping").into_response()
+        }
+    }
+}
+
+async fn api_create_cupping(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<CreateCuppingRequest>,
+) -> Response {
+    match state
+        .session_service
+        .create_cupping(&session_id, req)
+        .await
+    {
+        Ok(cupping) => (StatusCode::CREATED, Json(cupping)).into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to create cupping");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create cupping",
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn api_delete_cupping(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Response {
+    match state.session_service.delete_cupping(&session_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to delete cupping");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to delete cupping",
             )
                 .into_response()
         }

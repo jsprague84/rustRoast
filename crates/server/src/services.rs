@@ -110,10 +110,13 @@ impl RoastSessionService {
             None
         };
 
+        let cupping = self.get_cupping(id).await?;
+
         Ok(Some(SessionWithTelemetry {
             session,
             telemetry,
             profile,
+            cupping,
         }))
     }
 
@@ -883,6 +886,95 @@ impl RoastSessionService {
 
         Ok(())
     }
+
+    // ---- Cupping Notes CRUD (AP-012) ----
+
+    pub async fn create_cupping(
+        &self,
+        session_id: &str,
+        req: CreateCuppingRequest,
+    ) -> Result<CuppingWithAttributes> {
+        let cupping_id = Uuid::new_v4().to_string();
+        let framework = req.scoring_framework.unwrap_or_else(|| "sca".to_string());
+
+        // Compute overall score as average of attribute scores
+        let overall: Option<f32> = if req.attributes.is_empty() {
+            None
+        } else {
+            let sum: f32 = req.attributes.iter().map(|a| a.score).sum();
+            Some(sum / req.attributes.len() as f32)
+        };
+
+        let cupping = sqlx::query_as::<_, CuppingScore>(
+            r#"INSERT INTO cupping_scores (id, session_id, scoring_framework, overall_score, notes)
+               VALUES (?, ?, ?, ?, ?)
+               RETURNING *"#,
+        )
+        .bind(&cupping_id)
+        .bind(session_id)
+        .bind(&framework)
+        .bind(overall)
+        .bind(&req.notes)
+        .fetch_one(&self.db)
+        .await?;
+
+        let mut attributes = Vec::new();
+        for attr in &req.attributes {
+            let attr_id = Uuid::new_v4().to_string();
+            let row = sqlx::query_as::<_, CuppingAttribute>(
+                r#"INSERT INTO cupping_attributes (id, cupping_id, attribute_name, score)
+                   VALUES (?, ?, ?, ?)
+                   RETURNING *"#,
+            )
+            .bind(&attr_id)
+            .bind(&cupping_id)
+            .bind(&attr.name)
+            .bind(attr.score)
+            .fetch_one(&self.db)
+            .await?;
+            attributes.push(row);
+        }
+
+        Ok(CuppingWithAttributes {
+            cupping,
+            attributes,
+        })
+    }
+
+    pub async fn get_cupping(&self, session_id: &str) -> Result<Option<CuppingWithAttributes>> {
+        let cupping = sqlx::query_as::<_, CuppingScore>(
+            "SELECT * FROM cupping_scores WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(session_id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        let cupping = match cupping {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        let attributes = sqlx::query_as::<_, CuppingAttribute>(
+            "SELECT * FROM cupping_attributes WHERE cupping_id = ? ORDER BY attribute_name",
+        )
+        .bind(&cupping.id)
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(Some(CuppingWithAttributes {
+            cupping,
+            attributes,
+        }))
+    }
+
+    pub async fn delete_cupping(&self, session_id: &str) -> Result<()> {
+        // CASCADE will delete cupping_attributes
+        sqlx::query("DELETE FROM cupping_scores WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.db)
+            .await?;
+        Ok(())
+    }
 }
 
 // Artisan Profile Parser
@@ -1493,6 +1585,7 @@ impl DeviceService {
         tx.commit().await?;
         Ok(result)
     }
+
 }
 
 #[cfg(test)]
@@ -1520,6 +1613,7 @@ mod tests {
             include_str!("../migrations/003_device_configuration.sql"),
             include_str!("../migrations/004_session_statistics.sql"),
             include_str!("../migrations/005_auc_value.sql"),
+            include_str!("../migrations/006_cupping_scores.sql"),
         ];
         for migration_sql in migrations {
             for statement in migration_sql.split(';') {
@@ -2478,5 +2572,85 @@ mod tests {
             (auc - 250.0).abs() < 0.1,
             "AUC should be 250.0 °C·min, got {auc}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_cupping_crud() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create a session
+        let session = service
+            .create_session(CreateSessionRequest {
+                name: "Cupping Test".to_string(),
+                device_id: "esp32-001".to_string(),
+                profile_id: None,
+                bean_origin: Some("Ethiopia".to_string()),
+                bean_variety: None,
+                green_weight: None,
+                target_roast_level: None,
+                notes: None,
+                ambient_temp: None,
+                humidity: None,
+            })
+            .await
+            .unwrap();
+
+        // No cupping initially
+        let cupping = service.get_cupping(&session.id).await.unwrap();
+        assert!(cupping.is_none());
+
+        // Create cupping with attributes
+        let result = service
+            .create_cupping(
+                &session.id,
+                CreateCuppingRequest {
+                    scoring_framework: Some("sca".to_string()),
+                    notes: Some("Floral, bright".to_string()),
+                    attributes: vec![
+                        CreateCuppingAttributeRequest {
+                            name: "aroma".to_string(),
+                            score: 8.0,
+                        },
+                        CreateCuppingAttributeRequest {
+                            name: "acidity".to_string(),
+                            score: 7.5,
+                        },
+                        CreateCuppingAttributeRequest {
+                            name: "body".to_string(),
+                            score: 7.0,
+                        },
+                    ],
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.cupping.session_id, session.id);
+        assert_eq!(result.cupping.scoring_framework, "sca");
+        assert_eq!(result.cupping.notes, Some("Floral, bright".to_string()));
+        // overall_score = (8.0 + 7.5 + 7.0) / 3 = 7.5
+        let overall = result.cupping.overall_score.unwrap();
+        assert!((overall - 7.5).abs() < 0.01);
+        assert_eq!(result.attributes.len(), 3);
+
+        // Fetch cupping
+        let fetched = service.get_cupping(&session.id).await.unwrap().unwrap();
+        assert_eq!(fetched.cupping.id, result.cupping.id);
+        assert_eq!(fetched.attributes.len(), 3);
+
+        // Cupping included in session with telemetry
+        let swt = service
+            .get_session_with_telemetry(&session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(swt.cupping.is_some());
+        assert_eq!(swt.cupping.unwrap().attributes.len(), 3);
+
+        // Delete cupping
+        service.delete_cupping(&session.id).await.unwrap();
+        let gone = service.get_cupping(&session.id).await.unwrap();
+        assert!(gone.is_none());
     }
 }

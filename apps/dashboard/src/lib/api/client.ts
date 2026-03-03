@@ -218,6 +218,47 @@ export const events = {
 		request<void>(`/api/sessions/${sessionId}/events/${eventId}`, { method: 'DELETE' })
 };
 
+// --- Cupping Notes API ---
+
+export interface CuppingAttribute {
+	id: string;
+	cupping_id: string;
+	attribute_name: string;
+	score: number;
+	created_at: string;
+}
+
+export interface CuppingScore {
+	id: string;
+	session_id: string;
+	scoring_framework: string;
+	overall_score: number | null;
+	notes: string | null;
+	created_at: string;
+	updated_at: string;
+	attributes: CuppingAttribute[];
+}
+
+export interface CreateCuppingRequest {
+	scoring_framework?: string;
+	notes?: string;
+	attributes: { name: string; score: number }[];
+}
+
+export const cupping = {
+	get: (sessionId: string) =>
+		request<CuppingScore | null>(`/api/sessions/${sessionId}/cupping`),
+
+	create: (sessionId: string, req: CreateCuppingRequest) =>
+		request<CuppingScore>(`/api/sessions/${sessionId}/cupping`, {
+			method: 'POST',
+			body: JSON.stringify(req)
+		}),
+
+	delete: (sessionId: string) =>
+		request<void>(`/api/sessions/${sessionId}/cupping`, { method: 'DELETE' })
+};
+
 // --- Profiles API ---
 
 export interface RoastProfile {

@@ -160,3 +160,19 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - Each detection must fire at most once per session — track with session-level state that resets on session change
   - AutoFC depends on RoR store value; track consecutive readings below threshold (not just instantaneous)
 ---
+
+## 2026-03-02 - AP-012
+- Added cupping notes model and CRUD endpoints (backend + frontend types)
+- Files changed:
+  - `crates/server/migrations/006_cupping_scores.sql` (new) — cupping_scores + cupping_attributes tables with CASCADE FK
+  - `crates/server/src/models.rs` — added CuppingScore, CuppingAttribute, CuppingWithAttributes, CreateCuppingAttributeRequest, CreateCuppingRequest; updated SessionWithTelemetry with cupping field
+  - `crates/server/src/services.rs` — added create_cupping(), get_cupping(), delete_cupping() methods in RoastSessionService; updated get_session_with_telemetry() to include cupping; added migration 006 to setup_test_db(); added test_cupping_crud test
+  - `crates/server/src/main.rs` — added migration 006 to init_db(); added api_get_cupping, api_create_cupping, api_delete_cupping handlers; registered 3 cupping routes
+  - `apps/dashboard/src/lib/api/client.ts` — added CuppingAttribute, CuppingScore, CreateCuppingRequest interfaces; added cupping API client (get, create, delete)
+- **Learnings for future iterations:**
+  - When adding methods to `impl RoastSessionService`, the block closes around line 889 — don't accidentally add methods inside `impl DeviceService` (which starts at line 1042)
+  - CuppingWithAttributes uses `#[serde(flatten)]` for the CuppingScore + Vec<CuppingAttribute> — serializes as flat JSON with nested attributes array
+  - For the api_get_cupping handler, `Json(cupping)` doesn't infer the type when returning `Option` — use `Json(serde_json::to_value(cupping).unwrap())` to resolve
+  - Overall score is auto-computed as the average of all attribute scores; if no attributes, overall_score is NULL
+  - get_cupping uses `ORDER BY created_at DESC LIMIT 1` to always return the most recent cupping for a session
+---

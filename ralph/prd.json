@@ -235,7 +235,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "notes": "Create tables in init_db. SCA scoring uses 0-10 scale with 0.25 increments (10 attributes, max total 100). The POST endpoint should be idempotent for a session — delete existing cupping data and recreate. Service methods: create_cupping(session_id, req), get_cupping(session_id), delete_cupping(session_id). The create method runs in a transaction: DELETE FROM cupping_scores WHERE session_id=?, DELETE FROM cupping_attributes WHERE cupping_id IN (...), then INSERT new data. Return the cupping data as part of get_session_with_telemetry by doing a LEFT JOIN or separate query. Frontend types will be added in the frontend story."
     },
     {
