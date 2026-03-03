@@ -255,6 +255,16 @@
 		const rorMax = rorValues.length > 0 ? Math.max(...rorValues, 5) : 30;
 		const rorMin = rorValues.length > 0 ? Math.min(...rorValues, 0) : 0;
 
+		// Fan speed data (only points with non-null fan_speed)
+		const fanData = sorted
+			.filter((p) => p.fan_speed !== null)
+			.map((p) => [p.time_seconds, p.fan_speed as number]);
+		const hasFanData = fanData.length > 0;
+
+		// Right Y-axis range: use 0-100 when fan data exists, otherwise fit RoR
+		const rightAxisMax = hasFanData ? 100 : Math.ceil(rorMax + 2);
+		const rightAxisMin = hasFanData ? 0 : Math.floor(rorMin);
+
 		// Phase markers (vertical dashed lines)
 		const dryTime = findTempCrossing(sorted, DRY_TEMP);
 		const fcTime = findTempCrossing(sorted, FC_TEMP);
@@ -296,7 +306,7 @@
 					const [t, val] = p.data;
 					const m = Math.floor(t / 60);
 					const s = Math.round(t % 60);
-					const unit = p.seriesName === 'Simulated RoR' ? '°C/min' : '°C';
+					const unit = p.seriesName === 'Simulated RoR' ? '°C/min' : p.seriesName === 'Fan Speed' ? '%' : '°C';
 					return `Time: ${m}:${s.toString().padStart(2, '0')}<br/>${p.seriesName}: ${val}${unit}`;
 				}
 			},
@@ -330,9 +340,9 @@
 				},
 				{
 					type: 'value',
-					name: 'RoR (°C/min)',
-					min: Math.floor(rorMin),
-					max: Math.ceil(rorMax + 2),
+					name: hasFanData ? 'RoR / Fan %' : 'RoR (°C/min)',
+					min: rightAxisMin,
+					max: rightAxisMax,
 					nameTextStyle: { color: '#34d399' },
 					axisLabel: { color: '#34d399' },
 					axisLine: { lineStyle: { color: '#34d399' } },
@@ -368,7 +378,21 @@
 					showSymbol: false,
 					symbolSize: 0,
 					silent: true
-				}
+				},
+				...(hasFanData ? [{
+					id: 'fan',
+					name: 'Fan Speed',
+					type: 'line' as const,
+					step: 'end' as const,
+					data: fanData,
+					yAxisIndex: 1,
+					itemStyle: { color: '#a78bfa' },
+					lineStyle: { width: 1.5, color: '#a78bfa' },
+					areaStyle: { opacity: 0.15, color: '#a78bfa' },
+					showSymbol: false,
+					symbolSize: 0,
+					silent: true
+				}] : [])
 			],
 			graphic: graphicElements
 		};

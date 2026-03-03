@@ -96,7 +96,7 @@
         "npm run build succeeds"
       ],
       "priority": 5,
-      "passes": false,
+      "passes": true,
       "notes": "The profile_points table already has a fan_speed column (INTEGER, 0-100). The ProfileDesigner already has a fan_speed input in the table view. This story adds the visual chart representation. Use ECharts step line series: { name: 'Fan Speed', type: 'line', step: 'end', data: sortedPoints.filter(p => p.fan_speed !== null).map(p => [p.time_seconds, p.fan_speed]), yAxisIndex: 1, areaStyle: { opacity: 0.15 }, itemStyle: { color: '#a78bfa' }, silent: true }. The fan speed shares the right Y-axis (0-100 range works for both RoR and fan percentage). Ensure fan_speed null points are excluded from the series data to avoid gaps."
     },
     {

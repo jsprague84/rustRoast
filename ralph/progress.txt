@@ -67,3 +67,14 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - `grid.right` must be increased (20→55) to make room for the second Y-axis labels
   - `silent: true` on a series prevents it from capturing mouse events (critical for the draggable point overlay)
 ---
+
+## 2026-03-02 - AP-005
+- Added fan speed stepped line series to profile designer chart
+- Files changed:
+  - `apps/dashboard/src/lib/components/ProfileDesigner.svelte` — added fan speed series (step:'end', purple, area fill 15%), dynamic right Y-axis range (0-100 when fan data present), tooltip unit for fan speed
+- **Learnings for future iterations:**
+  - ECharts `step: 'end'` creates a stepped line — use `as const` for TypeScript literal types
+  - Spread syntax `...(condition ? [item] : [])` is clean for conditionally adding series to an array
+  - When sharing a Y-axis between RoR and fan speed, fix the range to 0-100 (fan percentage) since RoR values (5-25) still display fine in that range
+  - Only render fan speed series when there are non-null fan_speed points to avoid empty legend entries
+---
