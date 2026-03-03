@@ -126,9 +126,33 @@
 		return { min: Math.max(0, Math.floor(lo - padding)), max: Math.ceil(hi + padding) };
 	}
 
-	// Build the graphic overlay elements — draggable circles for each point
-	function buildGraphic(instance: ReturnType<NonNullable<typeof chartComponent>['getInstance']>): GraphicComponentOption[] {
+	// Build the graphic overlay elements — draggable circles for each point.
+	// Uses the axis ranges we are about to apply (not the chart's current stale state)
+	// so that graphic positions are always in sync with series data.
+	function buildGraphic(
+		instance: ReturnType<NonNullable<typeof chartComponent>['getInstance']>,
+		xMin: number, xMax: number,
+		yMin: number, yMax: number
+	): GraphicComponentOption[] {
 		if (!instance) return [];
+
+		// Compute pixel mapping from the axis ranges we're about to set,
+		// matching the grid offsets in chartOption exactly.
+		const cw = instance.getWidth();
+		const ch = instance.getHeight();
+		const gl = 55, gr = 55, gt = 40, gb = 45;
+		const pw = cw - gl - gr;
+		const ph = ch - gt - gb;
+		const xSpan = (xMax - xMin) || 1;
+		const ySpan = (yMax - yMin) || 1;
+
+		function toPixel(dataX: number, dataY: number): [number, number] {
+			return [
+				gl + ((dataX - xMin) / xSpan) * pw,
+				gt + (1 - (dataY - yMin) / ySpan) * ph
+			];
+		}
+
 		const sorted = sortedPoints();
 		const elements: GraphicComponentOption[] = [];
 
@@ -140,76 +164,70 @@
 			const isSelected = selectedIndex === realIdx;
 
 			// BT handle (amber)
-			const btPos = instance.convertToPixel('grid', [pt.time_seconds, pt.target_temp]);
-			if (btPos) {
-				const [px, py] = btPos as number[];
+			const [px, py] = toPixel(pt.time_seconds, pt.target_temp);
+			elements.push({
+				type: 'circle',
+				x: px,
+				y: py,
+				shape: { r: SYMBOL_SIZE / 2 },
+				style: {
+					fill: isSelected ? '#ef4444' : '#f59e0b',
+					stroke: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
+					lineWidth: isSelected ? 3 : 1
+				},
+				draggable: true,
+				z: 100,
+				cursor: 'move',
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				ondrag(this: any) {
+					dragging = true;
+					const newVal = instance.convertFromPixel('grid', [this.x, this.y] as [number, number]);
+					if (!newVal || realIdx < 0) return;
+					const [newTime, newTemp] = newVal as number[];
+					points[realIdx].time_seconds = Math.max(0, Math.round(newTime));
+					points[realIdx].target_temp = Math.max(0, Math.round(newTemp * 10) / 10);
+				},
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				ondragend(this: any) {
+					points.sort((a, b) => a.time_seconds - b.time_seconds);
+					if (realIdx >= 0 && realIdx < points.length) {
+						const movedPt = points[realIdx];
+						selectedIndex = points.findIndex((p) => p === movedPt);
+					}
+				},
+				onclick() {
+					selectedIndex = realIdx >= 0 ? realIdx : null;
+				}
+			});
+
+			// ET handle (blue) — only for points that have an ET value
+			if (pt.target_env_temp !== null) {
+				const [epx, epy] = toPixel(pt.time_seconds, pt.target_env_temp);
 				elements.push({
 					type: 'circle',
-					x: px,
-					y: py,
-					shape: { r: SYMBOL_SIZE / 2 },
+					x: epx,
+					y: epy,
+					shape: { r: SYMBOL_SIZE / 2 - 1 },
 					style: {
-						fill: isSelected ? '#ef4444' : '#f59e0b',
+						fill: isSelected ? '#ef4444' : '#60a5fa',
 						stroke: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
 						lineWidth: isSelected ? 3 : 1
 					},
-					draggable: true,
-					z: 100,
-					cursor: 'move',
+					draggable: 'vertical' as unknown as boolean,
+					z: 99,
+					cursor: 'ns-resize',
 					// eslint-disable-next-line @typescript-eslint/no-explicit-any
 					ondrag(this: any) {
 						dragging = true;
 						const newVal = instance.convertFromPixel('grid', [this.x, this.y] as [number, number]);
 						if (!newVal || realIdx < 0) return;
-						const [newTime, newTemp] = newVal as number[];
-						points[realIdx].time_seconds = Math.max(0, Math.round(newTime));
-						points[realIdx].target_temp = Math.max(0, Math.round(newTemp * 10) / 10);
-					},
-					// eslint-disable-next-line @typescript-eslint/no-explicit-any
-					ondragend(this: any) {
-						points.sort((a, b) => a.time_seconds - b.time_seconds);
-						if (realIdx >= 0 && realIdx < points.length) {
-							const movedPt = points[realIdx];
-							selectedIndex = points.findIndex((p) => p === movedPt);
-						}
+						const [, newTemp] = newVal as number[];
+						points[realIdx].target_env_temp = Math.max(0, Math.round(newTemp * 10) / 10);
 					},
 					onclick() {
 						selectedIndex = realIdx >= 0 ? realIdx : null;
 					}
 				});
-			}
-
-			// ET handle (blue) — only for points that have an ET value
-			if (pt.target_env_temp !== null) {
-				const etPos = instance.convertToPixel('grid', [pt.time_seconds, pt.target_env_temp]);
-				if (etPos) {
-					const [epx, epy] = etPos as number[];
-					elements.push({
-						type: 'circle',
-						x: epx,
-						y: epy,
-						shape: { r: SYMBOL_SIZE / 2 - 1 },
-						style: {
-							fill: isSelected ? '#ef4444' : '#60a5fa',
-							stroke: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
-							lineWidth: isSelected ? 3 : 1
-						},
-						draggable: 'vertical' as unknown as boolean,
-						z: 99,
-						cursor: 'ns-resize',
-						// eslint-disable-next-line @typescript-eslint/no-explicit-any
-						ondrag(this: any) {
-							dragging = true;
-							const newVal = instance.convertFromPixel('grid', [this.x, this.y] as [number, number]);
-							if (!newVal || realIdx < 0) return;
-							const [, newTemp] = newVal as number[];
-							points[realIdx].target_env_temp = Math.max(0, Math.round(newTemp * 10) / 10);
-						},
-						onclick() {
-							selectedIndex = realIdx >= 0 ? realIdx : null;
-						}
-					});
-				}
 			}
 		}
 
@@ -310,8 +328,12 @@
 
 		// Build graphic overlays (draggable handles).
 		// Access chartReady to re-run this derivation after the chart instance is initialized.
+		// Pass axis ranges so graphic positions use the same mapping as the series data,
+		// avoiding stale-axis bugs when points change significantly (e.g. after transpose).
 		const instance = chartReady ? chartComponent?.getInstance() : null;
-		const graphicElements: GraphicComponentOption[] = instance ? buildGraphic(instance) : [];
+		const graphicElements: GraphicComponentOption[] = instance
+			? buildGraphic(instance, xRange.min, xRange.max, yRange.min, yRange.max)
+			: [];
 
 		return {
 			animation: false,
