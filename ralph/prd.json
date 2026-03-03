@@ -214,7 +214,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "notes": "Implement as a $effect in a new AutoEventDetector.svelte component (or within the dashboard page). Subscribe to the telemetry store and check conditions on each update. AutoDRY is simple: watch bean_temp cross the threshold. AutoFC is more nuanced — track a rolling 30s RoR average and detect when instantaneous RoR drops below 80% of it for 3 consecutive readings. Use a module-level $state Set to track which events have already been suggested this session (reset on session change). The toast notification can reuse the existing notifications store if one exists, or create a simple floating notification component. Settings loaded on mount via settings.get(). The backend needs the two new default settings seeded."
     },
     {

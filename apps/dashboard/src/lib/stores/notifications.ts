@@ -1,19 +1,25 @@
 import { writable } from 'svelte/store';
 
+export interface NotificationAction {
+	label: string;
+	callback: () => void;
+}
+
 export interface Notification {
 	id: string;
 	message: string;
 	type: 'error' | 'warning' | 'success';
 	timestamp: number;
+	action?: NotificationAction;
 }
 
 const { subscribe, update } = writable<Notification[]>([]);
 
 let counter = 0;
 
-function add(message: string, type: Notification['type'] = 'error', dismissMs = 5000) {
+function add(message: string, type: Notification['type'] = 'error', dismissMs = 5000, action?: NotificationAction) {
 	const id = `notif-${++counter}`;
-	const notification: Notification = { id, message, type, timestamp: Date.now() };
+	const notification: Notification = { id, message, type, timestamp: Date.now(), action };
 	update((n) => [...n, notification]);
 	if (dismissMs > 0) {
 		setTimeout(() => dismiss(id), dismissMs);
