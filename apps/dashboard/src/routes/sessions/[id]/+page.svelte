@@ -4,6 +4,7 @@
 	import Chart, { type ECOption } from '$lib/components/Chart.svelte';
 	import KeyTemperatures from '$lib/components/KeyTemperatures.svelte';
 	import PhaseStatsPanel from '$lib/components/PhaseStatsPanel.svelte';
+	import CuppingEditor from '$lib/components/CuppingEditor.svelte';
 	import { landmarkColors, landmarkLabels } from '$lib/constants/landmarks.js';
 	import type { SessionTelemetryPoint } from '$lib/types/session.js';
 	import { sessions } from '$lib/api/client.js';
@@ -255,4 +256,14 @@
 			avgRorMaillard={sessionData.avg_ror_maillard}
 			avgRorDevelopment={sessionData.avg_ror_development}
 		/>
+
+		<!-- Cupping Notes -->
+		<details class="rounded-lg border border-border bg-card">
+			<summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-foreground hover:bg-accent">
+				Cupping Notes
+			</summary>
+			<div class="border-t border-border p-4">
+				<CuppingEditor sessionId={sessionData.id} />
+			</div>
+		</details>
 	</div>

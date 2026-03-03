@@ -176,3 +176,17 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - Overall score is auto-computed as the average of all attribute scores; if no attributes, overall_score is NULL
   - get_cupping uses `ORDER BY created_at DESC LIMIT 1` to always return the most recent cupping for a session
 ---
+
+## 2026-03-02 - AP-013
+- Created CuppingEditor.svelte with radar chart and SCA scoring interface
+- Files changed:
+  - `apps/dashboard/src/lib/components/CuppingEditor.svelte` (new) — radar chart (ECharts RadarChart), 10 SCA attribute sliders (0-10, step 0.25), total score, notes textarea, save/delete buttons
+  - `apps/dashboard/src/routes/sessions/[id]/+page.svelte` — added CuppingEditor in collapsible `<details>` section after PhaseStatsPanel
+- **Learnings for future iterations:**
+  - ECharts radar chart requires separate registration: `RadarChart` from `echarts/charts` — cannot reuse Chart.svelte which only registers `LineChart`
+  - For radar charts, use `radar.indicator` for axis definitions and `series[].type: 'radar'` with `data[].value: number[]`
+  - `radar.shape: 'polygon'` must use `as const` for TypeScript literal type
+  - CuppingEditor manages its own ECharts instance since it uses a different chart type
+  - `<details>` element provides native collapsible behavior — no need for custom toggle state
+  - The cupping API client (from AP-012) handles frontend types already; no new types needed
+---

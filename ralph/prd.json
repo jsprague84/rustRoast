@@ -259,7 +259,7 @@
         "npm run build succeeds"
       ],
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "notes": "ECharts radar chart config: { radar: { indicator: attributes.map(a => ({ name: a.label, max: 10 })), shape: 'polygon' }, series: [{ type: 'radar', data: [{ value: scores }] }] }. Use the Chart.svelte wrapper. SCA attributes with display labels: Fragrance/Aroma, Flavor, Aftertaste, Acidity, Body, Balance, Uniformity, Clean Cup, Sweetness, Overall. Place on the session detail page below the telemetry chart in a collapsible section (use a <details> element or toggle button). The collapsible starts closed. Frontend API client adds a 'cupping' namespace. Load via $effect on mount."
     },
     {
