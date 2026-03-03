@@ -336,6 +336,9 @@ impl RoastSessionService {
             _ => None,
         };
 
+        // Compute AUC (Area Under the Curve) using trapezoidal rule
+        let auc_value = self.compute_auc(id, &events).await?;
+
         let session = sqlx::query_as::<_, RoastSession>(
             r#"
             UPDATE roast_sessions
@@ -345,7 +348,8 @@ impl RoastSessionService {
                 development_time_ratio = COALESCE(?, development_time_ratio),
                 weight_loss_pct = ?,
                 avg_ror_drying = ?, avg_ror_maillard = ?, avg_ror_development = ?,
-                drying_end_time = ?, drying_end_temp = ?
+                drying_end_time = ?, drying_end_temp = ?,
+                auc_value = ?
             WHERE id = ? AND status IN (?, ?)
             RETURNING *
             "#,
@@ -364,6 +368,7 @@ impl RoastSessionService {
         .bind(avg_ror_development)
         .bind(drying_end_time)
         .bind(drying_end_temp)
+        .bind(auc_value)
         .bind(id)
         .bind(SessionStatus::Active.to_string())
         .bind(SessionStatus::Paused.to_string())
@@ -395,6 +400,81 @@ impl RoastSessionService {
         .await?;
 
         Ok(row.and_then(|r| r.try_get("avg_ror").ok()))
+    }
+
+    /// Compute AUC (Area Under the Curve) using the trapezoidal rule on bean_temp.
+    /// Result is in °C·min units. Base temp and start event are read from settings.
+    async fn compute_auc(
+        &self,
+        session_id: &str,
+        events: &[RoastEvent],
+    ) -> Result<Option<f32>> {
+        // Read settings
+        let base_temp: f32 = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM settings WHERE key = 'auc_base_temp'",
+        )
+        .fetch_optional(&self.db)
+        .await?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+
+        let start_event: String = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM settings WHERE key = 'auc_start_event'",
+        )
+        .fetch_optional(&self.db)
+        .await?
+        .unwrap_or_else(|| "charge".to_string());
+
+        // Determine start elapsed_seconds based on the configured event
+        let start_seconds = match start_event.as_str() {
+            "drying_end" => events
+                .iter()
+                .find(|e| e.event_type == RoastEventType::DryingEnd)
+                .map(|e| e.elapsed_seconds)
+                .unwrap_or(0.0),
+            "first_crack_start" => events
+                .iter()
+                .find(|e| e.event_type == RoastEventType::FirstCrackStart)
+                .map(|e| e.elapsed_seconds)
+                .unwrap_or(0.0),
+            _ => 0.0, // "charge" or default
+        };
+
+        // Fetch telemetry ordered by time, starting from the configured event
+        let rows = sqlx::query(
+            r#"
+            SELECT elapsed_seconds, bean_temp
+            FROM session_telemetry
+            WHERE session_id = ? AND elapsed_seconds >= ? AND bean_temp IS NOT NULL
+            ORDER BY elapsed_seconds
+            "#,
+        )
+        .bind(session_id)
+        .bind(start_seconds)
+        .fetch_all(&self.db)
+        .await?;
+
+        if rows.len() < 2 {
+            return Ok(None);
+        }
+
+        // Trapezoidal rule: sum of (dt * (BT[i] + BT[i+1]) / 2) with base temp subtracted
+        let mut auc_seconds: f64 = 0.0;
+        for pair in rows.windows(2) {
+            let t0: f32 = pair[0].try_get("elapsed_seconds")?;
+            let t1: f32 = pair[1].try_get("elapsed_seconds")?;
+            let bt0: f32 = pair[0].try_get("bean_temp")?;
+            let bt1: f32 = pair[1].try_get("bean_temp")?;
+
+            let v0 = (bt0 - base_temp).max(0.0) as f64;
+            let v1 = (bt1 - base_temp).max(0.0) as f64;
+            let dt = (t1 - t0) as f64;
+
+            auc_seconds += dt * (v0 + v1) / 2.0;
+        }
+
+        // Convert from °C·s to °C·min
+        Ok(Some((auc_seconds / 60.0) as f32))
     }
 
     pub async fn delete_session(&self, id: &str) -> Result<bool> {
@@ -1439,6 +1519,7 @@ mod tests {
             include_str!("../migrations/002_roast_events.sql"),
             include_str!("../migrations/003_device_configuration.sql"),
             include_str!("../migrations/004_session_statistics.sql"),
+            include_str!("../migrations/005_auc_value.sql"),
         ];
         for migration_sql in migrations {
             for statement in migration_sql.split(';') {
@@ -1447,6 +1528,29 @@ mod tests {
                     let _ = sqlx::query(statement).execute(&pool).await;
                 }
             }
+        }
+
+        // Create settings table and seed defaults (mirrors init_db)
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );",
+        )
+        .execute(&pool)
+        .await
+        .expect("Failed to create settings table");
+        for (key, value) in [
+            ("profile_lookahead_seconds", "20"),
+            ("auc_base_temp", "0"),
+            ("auc_start_event", "charge"),
+        ] {
+            let _ = sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
+                .bind(key)
+                .bind(value)
+                .execute(&pool)
+                .await;
         }
 
         pool
@@ -2315,6 +2419,60 @@ mod tests {
         assert!(
             (avg_dev - 8.0).abs() < 0.1,
             "Avg RoR development should be ~8.0, got {avg_dev}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_session_computes_auc() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create and start a session
+        let session = service
+            .create_session(CreateSessionRequest {
+                name: "AUC Test Roast".to_string(),
+                device_id: "esp32-001".to_string(),
+                profile_id: None,
+                bean_origin: None,
+                bean_variety: None,
+                green_weight: None,
+                target_roast_level: None,
+                notes: None,
+                ambient_temp: None,
+                humidity: None,
+            })
+            .await
+            .unwrap();
+        service.start_session(&session.id).await.unwrap();
+
+        // 3-point linear curve: (0s, 100°C), (60s, 100°C), (120s, 200°C)
+        // With base_temp=0 (default):
+        //   Segment 1: dt=60, avg_temp=(100+100)/2=100 → area = 60*100 = 6000 °C·s
+        //   Segment 2: dt=60, avg_temp=(100+200)/2=150 → area = 60*150 = 9000 °C·s
+        //   Total = 15000 °C·s = 250 °C·min
+        service
+            .add_telemetry_point(&session.id, 0.0, Some(100.0), None, None, None, None, None)
+            .await
+            .unwrap();
+        service
+            .add_telemetry_point(&session.id, 60.0, Some(100.0), None, None, None, None, None)
+            .await
+            .unwrap();
+        service
+            .add_telemetry_point(&session.id, 120.0, Some(200.0), None, None, None, None, None)
+            .await
+            .unwrap();
+
+        let completed = service
+            .complete_session(&session.id)
+            .await
+            .unwrap()
+            .expect("session should be returned");
+
+        let auc = completed.auc_value.unwrap();
+        assert!(
+            (auc - 250.0).abs() < 0.1,
+            "AUC should be 250.0 °C·min, got {auc}"
         );
     }
 }

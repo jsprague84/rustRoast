@@ -138,6 +138,7 @@ export interface RoastSession {
 	avg_ror_development: number | null;
 	drying_end_time: number | null;
 	drying_end_temp: number | null;
+	auc_value: number | null;
 }
 
 export interface CreateSessionRequest {

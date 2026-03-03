@@ -41,6 +41,9 @@ pub struct RoastSession {
     pub avg_ror_development: Option<f32>,
     pub drying_end_time: Option<i32>,
     pub drying_end_temp: Option<f32>,
+
+    // AUC (AP-002)
+    pub auc_value: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

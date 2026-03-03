@@ -1635,6 +1635,16 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('auc_base_temp', '0');",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('auc_start_event', 'charge');",
+    )
+    .execute(&pool)
+    .await?;
 
     // Run migrations
     let migrations: &[&str] = &[
@@ -1642,6 +1652,7 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
         include_str!("../migrations/002_roast_events.sql"),
         include_str!("../migrations/003_device_configuration.sql"),
         include_str!("../migrations/004_session_statistics.sql"),
+        include_str!("../migrations/005_auc_value.sql"),
     ];
     for migration_sql in migrations {
         for statement in migration_sql.split(';') {

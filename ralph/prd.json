@@ -40,7 +40,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": "The trapezoidal rule is straightforward: query session_telemetry ORDER BY elapsed_seconds, iterate pairwise, accumulate. Base temp subtraction: for each sample, use max(0, bean_temp - base_temp) to avoid negative contributions. The AUC start event means we skip telemetry before the relevant event's elapsed_seconds. Settings are read via the existing settings table (SELECT value FROM settings WHERE key = ?). Add auc_base_temp and auc_start_event defaults in init_db alongside profile_lookahead_seconds. Result unit is °C·min — Artisan uses this unit for comparability. Frontend types need auc_value added to RoastSession."
     },
     {

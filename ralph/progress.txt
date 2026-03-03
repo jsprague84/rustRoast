@@ -26,3 +26,18 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - Phase boundaries come from roast_events table: drying_end → first_crack_start → drop
   - The COALESCE pattern (e.g. `COALESCE(?, first_crack_time)`) preserves manually-set values when auto-computed values are NULL
 ---
+
+## 2026-03-02 - AP-002
+- Implemented AUC (Area Under the Curve) computation using trapezoidal rule
+- Files changed:
+  - `crates/server/migrations/005_auc_value.sql` (new) — ALTER TABLE adding auc_value column
+  - `crates/server/src/main.rs` — added migration 005, seeded auc_base_temp and auc_start_event settings
+  - `crates/server/src/models.rs` — added auc_value: Option<f32> field
+  - `crates/server/src/services.rs` — added compute_auc() method, integrated into complete_session(), added settings table + seeds to setup_test_db(), added AUC test
+  - `apps/dashboard/src/lib/api/client.ts` — added auc_value to RoastSession interface
+- **Learnings for future iterations:**
+  - `setup_test_db()` must also create settings table and seed defaults — migrations don't include the inline CREATE TABLE from init_db
+  - `sqlx::query_scalar::<_, String>()` is a clean way to fetch a single setting value
+  - AUC is computed in °C·s internally then divided by 60 for °C·min units
+  - Trapezoidal rule uses `rows.windows(2)` for pairwise iteration
+---
