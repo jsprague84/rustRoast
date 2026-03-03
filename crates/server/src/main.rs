@@ -1645,6 +1645,16 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('ror_window_seconds', '30');",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('ror_smoothing_algorithm', 'moving_average');",
+    )
+    .execute(&pool)
+    .await?;
 
     // Run migrations
     let migrations: &[&str] = &[

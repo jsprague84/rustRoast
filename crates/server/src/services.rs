@@ -1545,6 +1545,8 @@ mod tests {
             ("profile_lookahead_seconds", "20"),
             ("auc_base_temp", "0"),
             ("auc_start_event", "charge"),
+            ("ror_window_seconds", "30"),
+            ("ror_smoothing_algorithm", "moving_average"),
         ] {
             let _ = sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
                 .bind(key)

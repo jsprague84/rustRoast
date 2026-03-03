@@ -41,3 +41,13 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - AUC is computed in °C·s internally then divided by 60 for °C·min units
   - Trapezoidal rule uses `rows.windows(2)` for pairwise iteration
 ---
+
+## 2026-03-02 - AP-003
+- Seeded RoR smoothing settings: ror_window_seconds='30', ror_smoothing_algorithm='moving_average'
+- Files changed:
+  - `crates/server/src/main.rs` — added 2 INSERT OR IGNORE statements in init_db
+  - `crates/server/src/services.rs` — added 2 settings to setup_test_db seed array
+- **Learnings for future iterations:**
+  - Settings-only stories are minimal: just INSERT OR IGNORE in init_db + mirror in setup_test_db
+  - Supported algorithms (moving_average, weighted_moving_average, savitzky_golay) are just string values — no backend validation
+---

@@ -55,7 +55,7 @@
         "cargo clippy --workspace -- -D warnings passes"
       ],
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "notes": "This is a minimal backend story — just seed the default settings in init_db using INSERT OR IGNORE. The actual smoothing computation happens in the frontend telemetry store (AP-007). The backend only persists the preference. Add the two INSERT OR IGNORE statements alongside the existing profile_lookahead_seconds seed."
     },
     {
