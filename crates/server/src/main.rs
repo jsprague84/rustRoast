@@ -1639,7 +1639,9 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     // Run migrations
     let migrations: &[&str] = &[
         include_str!("../migrations/001_roast_sessions.sql"),
+        include_str!("../migrations/002_roast_events.sql"),
         include_str!("../migrations/003_device_configuration.sql"),
+        include_str!("../migrations/004_session_statistics.sql"),
     ];
     for migration_sql in migrations {
         for statement in migration_sql.split(';') {

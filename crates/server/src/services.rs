@@ -241,13 +241,20 @@ impl RoastSessionService {
     pub async fn complete_session(&self, id: &str) -> Result<Option<RoastSession>> {
         let now = Utc::now();
 
-        // Calculate total time and max temperature from telemetry
+        // Fetch the session first to get green_weight / roasted_weight
+        let existing = match self.get_session(id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        // Calculate total time, max temperature, and max RoR from telemetry
         let stats = sqlx::query(
             r#"
-            SELECT 
+            SELECT
                 MAX(elapsed_seconds) as total_seconds,
-                MAX(bean_temp) as max_temp
-            FROM session_telemetry 
+                MAX(bean_temp) as max_temp,
+                MAX(rate_of_rise) as max_ror
+            FROM session_telemetry
             WHERE session_id = ?
             "#,
         )
@@ -255,18 +262,90 @@ impl RoastSessionService {
         .fetch_optional(&self.db)
         .await?;
 
-        let (total_time_seconds, max_temp) = if let Some(row) = stats {
+        let (total_time_seconds, max_temp, max_ror) = if let Some(row) = &stats {
             let total_seconds: Option<f32> = row.try_get("total_seconds").ok();
             let max_temp: Option<f32> = row.try_get("max_temp").ok();
-            (total_seconds.map(|s| s as i32), max_temp)
+            let max_ror: Option<f32> = row.try_get("max_ror").ok();
+            (total_seconds.map(|s| s as i32), max_temp, max_ror)
         } else {
-            (None, None)
+            (None, None, None)
+        };
+
+        // Fetch roast events for phase boundaries
+        let events = self.get_roast_events(id).await?;
+
+        let drying_end_event = events
+            .iter()
+            .find(|e| e.event_type == RoastEventType::DryingEnd);
+        let first_crack_event = events
+            .iter()
+            .find(|e| e.event_type == RoastEventType::FirstCrackStart);
+        let drop_event = events
+            .iter()
+            .find(|e| e.event_type == RoastEventType::Drop);
+
+        // Compute development_time_ratio: DTR = (total_time - fc_start) / total_time
+        let development_time_ratio = match (total_time_seconds, first_crack_event) {
+            (Some(total), Some(fc)) if total > 0 => {
+                Some((total as f32 - fc.elapsed_seconds) / total as f32)
+            }
+            _ => None,
+        };
+
+        // Compute first_crack_time from event
+        let first_crack_time = first_crack_event.map(|fc| fc.elapsed_seconds as i32);
+
+        // Compute weight_loss_pct
+        let weight_loss_pct = match (existing.green_weight, existing.roasted_weight) {
+            (Some(green), Some(roasted)) if green > 0.0 => {
+                Some((green - roasted) / green * 100.0)
+            }
+            _ => None,
+        };
+
+        // Drying end time and temp from events
+        let drying_end_time = drying_end_event.map(|e| e.elapsed_seconds as i32);
+        let drying_end_temp = drying_end_event.and_then(|e| e.temperature);
+
+        // Phase boundaries (elapsed_seconds):
+        //   Drying:      0 → drying_end
+        //   Maillard:    drying_end → first_crack_start
+        //   Development: first_crack_start → drop (or total_time)
+        let end_seconds = drop_event
+            .map(|e| e.elapsed_seconds)
+            .or(total_time_seconds.map(|t| t as f32));
+
+        let avg_ror_drying = if let Some(de) = drying_end_event {
+            self.avg_ror_in_range(id, 0.0, de.elapsed_seconds).await?
+        } else {
+            None
+        };
+
+        let avg_ror_maillard = match (drying_end_event, first_crack_event) {
+            (Some(de), Some(fc)) => {
+                self.avg_ror_in_range(id, de.elapsed_seconds, fc.elapsed_seconds)
+                    .await?
+            }
+            _ => None,
+        };
+
+        let avg_ror_development = match (first_crack_event, end_seconds) {
+            (Some(fc), Some(end)) => {
+                self.avg_ror_in_range(id, fc.elapsed_seconds, end).await?
+            }
+            _ => None,
         };
 
         let session = sqlx::query_as::<_, RoastSession>(
             r#"
-            UPDATE roast_sessions 
-            SET status = ?, end_time = ?, updated_at = ?, total_time_seconds = ?, max_temp = ?
+            UPDATE roast_sessions
+            SET status = ?, end_time = ?, updated_at = ?,
+                total_time_seconds = ?, max_temp = ?, max_ror = ?,
+                first_crack_time = COALESCE(?, first_crack_time),
+                development_time_ratio = COALESCE(?, development_time_ratio),
+                weight_loss_pct = ?,
+                avg_ror_drying = ?, avg_ror_maillard = ?, avg_ror_development = ?,
+                drying_end_time = ?, drying_end_temp = ?
             WHERE id = ? AND status IN (?, ?)
             RETURNING *
             "#,
@@ -276,6 +355,15 @@ impl RoastSessionService {
         .bind(now)
         .bind(total_time_seconds)
         .bind(max_temp)
+        .bind(max_ror)
+        .bind(first_crack_time)
+        .bind(development_time_ratio)
+        .bind(weight_loss_pct)
+        .bind(avg_ror_drying)
+        .bind(avg_ror_maillard)
+        .bind(avg_ror_development)
+        .bind(drying_end_time)
+        .bind(drying_end_temp)
         .bind(id)
         .bind(SessionStatus::Active.to_string())
         .bind(SessionStatus::Paused.to_string())
@@ -283,6 +371,30 @@ impl RoastSessionService {
         .await?;
 
         Ok(session)
+    }
+
+    /// Compute average rate_of_rise within a time range from session telemetry.
+    async fn avg_ror_in_range(
+        &self,
+        session_id: &str,
+        start: f32,
+        end: f32,
+    ) -> Result<Option<f32>> {
+        let row = sqlx::query(
+            r#"
+            SELECT AVG(rate_of_rise) as avg_ror
+            FROM session_telemetry
+            WHERE session_id = ? AND elapsed_seconds >= ? AND elapsed_seconds < ?
+              AND rate_of_rise IS NOT NULL
+            "#,
+        )
+        .bind(session_id)
+        .bind(start)
+        .bind(end)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(row.and_then(|r| r.try_get("avg_ror").ok()))
     }
 
     pub async fn delete_session(&self, id: &str) -> Result<bool> {
@@ -1324,7 +1436,9 @@ mod tests {
         // Run migrations
         let migrations: &[&str] = &[
             include_str!("../migrations/001_roast_sessions.sql"),
+            include_str!("../migrations/002_roast_events.sql"),
             include_str!("../migrations/003_device_configuration.sql"),
+            include_str!("../migrations/004_session_statistics.sql"),
         ];
         for migration_sql in migrations {
             for statement in migration_sql.split(';') {
@@ -2053,5 +2167,154 @@ mod tests {
             .unwrap();
 
         assert!(missing.is_none());
+    }
+
+    // ---- Session Completion Statistics Tests ----
+
+    #[tokio::test]
+    async fn test_complete_session_computes_dtr_and_weight_loss() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create a session with green and roasted weights
+        let session = service
+            .create_session(CreateSessionRequest {
+                name: "Stats Test Roast".to_string(),
+                device_id: "esp32-001".to_string(),
+                profile_id: None,
+                bean_origin: Some("Ethiopia".to_string()),
+                bean_variety: Some("Yirgacheffe".to_string()),
+                green_weight: Some(200.0),
+                target_roast_level: Some("medium".to_string()),
+                notes: None,
+                ambient_temp: None,
+                humidity: None,
+            })
+            .await
+            .unwrap();
+
+        // Start the session
+        let session = service.start_session(&session.id).await.unwrap().unwrap();
+        assert_eq!(session.status, SessionStatus::Active);
+
+        // Set roasted weight via update
+        service
+            .update_session(
+                &session.id,
+                UpdateSessionRequest {
+                    name: None,
+                    roasted_weight: Some(170.0),
+                    notes: None,
+                    first_crack_time: None,
+                    development_time_ratio: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Add telemetry points spanning 600 seconds with varying RoR
+        for i in 0..=600 {
+            if i % 10 == 0 {
+                let elapsed = i as f32;
+                let bean_temp = 100.0 + (elapsed / 600.0) * 120.0; // 100→220°C
+                let ror = if elapsed < 200.0 {
+                    15.0 // drying phase
+                } else if elapsed < 400.0 {
+                    12.0 // maillard phase
+                } else {
+                    8.0 // development phase
+                };
+                service
+                    .add_telemetry_point(
+                        &session.id,
+                        elapsed,
+                        Some(bean_temp),
+                        Some(bean_temp + 20.0),
+                        Some(ror),
+                        Some(80),
+                        Some(200),
+                        Some(bean_temp),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+
+        // Add roast events for phase boundaries
+        service
+            .create_roast_event(
+                &session.id,
+                CreateRoastEventRequest {
+                    event_type: RoastEventType::DryingEnd,
+                    elapsed_seconds: 200.0,
+                    temperature: Some(140.0),
+                    notes: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        service
+            .create_roast_event(
+                &session.id,
+                CreateRoastEventRequest {
+                    event_type: RoastEventType::FirstCrackStart,
+                    elapsed_seconds: 400.0,
+                    temperature: Some(200.0),
+                    notes: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Complete the session
+        let completed = service
+            .complete_session(&session.id)
+            .await
+            .unwrap()
+            .expect("session should be returned");
+
+        assert_eq!(completed.status, SessionStatus::Completed);
+
+        // DTR: (600 - 400) / 600 = 200/600 ≈ 0.333
+        let dtr = completed.development_time_ratio.unwrap();
+        assert!((dtr - 0.333).abs() < 0.01, "DTR should be ~0.333, got {dtr}");
+
+        // Weight loss: (200 - 170) / 200 * 100 = 15%
+        let wl = completed.weight_loss_pct.unwrap();
+        assert!((wl - 15.0).abs() < 0.1, "Weight loss should be 15%, got {wl}");
+
+        // Max RoR should be 15.0
+        let max_ror = completed.max_ror.unwrap();
+        assert!(
+            (max_ror - 15.0).abs() < 0.1,
+            "Max RoR should be 15.0, got {max_ror}"
+        );
+
+        // First crack time should be 400 seconds
+        assert_eq!(completed.first_crack_time, Some(400));
+
+        // Drying end fields
+        assert_eq!(completed.drying_end_time, Some(200));
+        assert_eq!(completed.drying_end_temp, Some(140.0));
+
+        // Phase avg RoR values
+        let avg_dry = completed.avg_ror_drying.unwrap();
+        assert!(
+            (avg_dry - 15.0).abs() < 0.1,
+            "Avg RoR drying should be ~15.0, got {avg_dry}"
+        );
+
+        let avg_mail = completed.avg_ror_maillard.unwrap();
+        assert!(
+            (avg_mail - 12.0).abs() < 0.1,
+            "Avg RoR maillard should be ~12.0, got {avg_mail}"
+        );
+
+        let avg_dev = completed.avg_ror_development.unwrap();
+        assert!(
+            (avg_dev - 8.0).abs() < 0.1,
+            "Avg RoR development should be ~8.0, got {avg_dev}"
+        );
     }
 }

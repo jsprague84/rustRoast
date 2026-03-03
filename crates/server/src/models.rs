@@ -32,6 +32,15 @@ pub struct RoastSession {
     pub total_time_seconds: Option<i32>,
     pub first_crack_time: Option<i32>,
     pub development_time_ratio: Option<f32>,
+
+    // Enhanced statistics (AP-001)
+    pub weight_loss_pct: Option<f32>,
+    pub max_ror: Option<f32>,
+    pub avg_ror_drying: Option<f32>,
+    pub avg_ror_maillard: Option<f32>,
+    pub avg_ror_development: Option<f32>,
+    pub drying_end_time: Option<i32>,
+    pub drying_end_temp: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

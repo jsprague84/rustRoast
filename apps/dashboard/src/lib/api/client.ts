@@ -128,6 +128,16 @@ export interface RoastSession {
 	roasted_weight: number | null;
 	notes: string | null;
 	total_time_seconds: number | null;
+	max_temp: number | null;
+	first_crack_time: number | null;
+	development_time_ratio: number | null;
+	weight_loss_pct: number | null;
+	max_ror: number | null;
+	avg_ror_drying: number | null;
+	avg_ror_maillard: number | null;
+	avg_ror_development: number | null;
+	drying_end_time: number | null;
+	drying_end_temp: number | null;
 }
 
 export interface CreateSessionRequest {
