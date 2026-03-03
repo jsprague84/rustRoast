@@ -105,3 +105,16 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - Cramer's rule works for the 3x3 normal equations — no need for a full matrix library
   - Import from $lib/api/client.js in telemetry.ts is safe (no circular dependency)
 ---
+
+## 2026-03-02 - AP-008
+- Created PhaseStatsPanel.svelte with enhanced phase statistics (replaces PhaseTimingTable on session detail)
+- Files changed:
+  - `apps/dashboard/src/lib/components/PhaseStatsPanel.svelte` (new) — phase table with duration, %, avg RoR, temp rise, DTR; Artisan-style colors; accepts optional pre-computed stats
+  - `apps/dashboard/src/routes/sessions/[id]/+page.svelte` — replaced PhaseTimingTable with PhaseStatsPanel, passes avg_ror_* from session object
+  - `apps/dashboard/src/routes/+page.svelte` — added PhaseStatsPanel to dashboard sidebar, stores sessionEvents from API alongside landmarks
+- **Learnings for future iterations:**
+  - PhaseStatsPanel derives avg RoR either from pre-computed session fields (historical) or from tempRise/duration (live)
+  - Dashboard already loads events via loadLandmarks() — store the raw RoastEvent[] for reuse by other components
+  - Phase colors: Drying=#22c55e, Maillard=#eab308, Development=#92400e (Artisan convention)
+  - PhaseTimingTable.svelte still exists (not deleted) in case other pages reference it
+---
