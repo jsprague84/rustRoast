@@ -136,7 +136,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "The current RoR calculation in telemetry.ts uses a 30-second window with simple (lastTemp - firstTemp) / dt * 60. Replace with a function that accepts the algorithm name and window size. For Savitzky-Golay, implement a minimal version: given N points (time, temp), fit a polynomial p(t) = a + bt + ct², then RoR = b + 2ct evaluated at the center time, scaled to °C/min. This can be done with a 3x3 matrix solve or precomputed convolution coefficients for uniform spacing (since telemetry is ~1Hz). Load settings once on mount via settings.get() and store in module-level $state variables. The settings page input follows the same pattern as the lookahead setting (PF-010). Keep the settings page clean — group under a 'Rate of Rise' subsection."
     },
     {

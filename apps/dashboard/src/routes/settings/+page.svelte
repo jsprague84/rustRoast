@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { hasApiKey, setApiKey, clearApiKey, settings } from '$lib/api/client.js';
+	import { setRorConfig } from '$lib/stores/telemetry.js';
 	import AutotunePanel from '$lib/components/AutotunePanel.svelte';
 
 	let apiKey = $state('');
@@ -9,6 +10,10 @@
 	let lookahead = $state(20);
 	let lookaheadSaved = $state(false);
 
+	let rorWindow = $state(30);
+	let rorAlgorithm = $state('moving_average');
+	let rorSaved = $state(false);
+
 	$effect(() => {
 		hasKey = hasApiKey();
 	});
@@ -17,6 +22,10 @@
 		settings.get().then((s) => {
 			const val = parseInt(s['profile_lookahead_seconds'] ?? '20', 10);
 			if (!isNaN(val)) lookahead = val;
+
+			const rorW = parseInt(s['ror_window_seconds'] ?? '30', 10);
+			if (!isNaN(rorW)) rorWindow = rorW;
+			rorAlgorithm = s['ror_smoothing_algorithm'] ?? 'moving_average';
 		});
 	});
 
@@ -41,6 +50,19 @@
 		settings.set('profile_lookahead_seconds', String(clamped)).then(() => {
 			lookaheadSaved = true;
 			setTimeout(() => (lookaheadSaved = false), 2000);
+		});
+	}
+
+	function saveRorSettings() {
+		const clampedWindow = Math.max(5, Math.min(120, rorWindow));
+		rorWindow = clampedWindow;
+		Promise.all([
+			settings.set('ror_window_seconds', String(clampedWindow)),
+			settings.set('ror_smoothing_algorithm', rorAlgorithm)
+		]).then(() => {
+			setRorConfig(clampedWindow, rorAlgorithm);
+			rorSaved = true;
+			setTimeout(() => (rorSaved = false), 2000);
 		});
 	}
 </script>
@@ -112,6 +134,56 @@
 		</div>
 		{#if lookaheadSaved}
 			<p class="mt-2 text-sm text-green-400">Lookahead saved.</p>
+		{/if}
+	</div>
+
+	<div class="rounded-lg border border-border bg-card p-4">
+		<h2 class="text-lg font-semibold text-foreground">Rate of Rise</h2>
+
+		<label for="ror-window" class="mt-3 block text-sm font-medium text-foreground">
+			Smoothing Window ({rorWindow}s)
+		</label>
+		<p class="mt-1 text-sm text-muted-foreground">
+			Time window for RoR calculation. Larger values produce smoother curves. Default: 30s
+		</p>
+		<input
+			id="ror-window"
+			type="range"
+			min="5"
+			max="120"
+			step="5"
+			bind:value={rorWindow}
+			class="mt-2 w-full"
+		/>
+		<div class="mt-0.5 flex justify-between text-xs text-muted-foreground">
+			<span>5s (responsive)</span>
+			<span>120s (smooth)</span>
+		</div>
+
+		<label for="ror-algorithm" class="mt-4 block text-sm font-medium text-foreground">
+			Smoothing Algorithm
+		</label>
+		<p class="mt-1 text-sm text-muted-foreground">
+			Method used to calculate rate of change from temperature data.
+		</p>
+		<select
+			id="ror-algorithm"
+			bind:value={rorAlgorithm}
+			class="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+		>
+			<option value="moving_average">Moving Average</option>
+			<option value="weighted_moving_average">Weighted Moving Average</option>
+			<option value="savitzky_golay">Savitzky-Golay</option>
+		</select>
+
+		<button
+			onclick={saveRorSettings}
+			class="mt-3 rounded-md bg-amber-600 px-4 py-2 text-sm font-medium text-white hover:bg-amber-700"
+		>
+			Save
+		</button>
+		{#if rorSaved}
+			<p class="mt-2 text-sm text-green-400">RoR settings saved.</p>
 		{/if}
 	</div>
 
