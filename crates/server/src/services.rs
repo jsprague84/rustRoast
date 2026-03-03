@@ -1812,6 +1812,8 @@ mod tests {
             ("ror_smoothing_algorithm", "moving_average"),
             ("auto_dry_temp", "150"),
             ("auto_event_detection", "true"),
+            ("alarm_sound_enabled", "true"),
+            ("roast_alarms", r#"[{"name":"High Temp Warning","condition_type":"temp_above","threshold":230,"enabled":true},{"name":"FC Approaching","condition_type":"temp_above","threshold":195,"enabled":true},{"name":"Low RoR Warning","condition_type":"ror_below","threshold":5.0,"reference_event":"first_crack_start","enabled":true}]"#),
         ] {
             let _ = sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
                 .bind(key)

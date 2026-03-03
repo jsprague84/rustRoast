@@ -318,7 +318,7 @@
         "npm run build succeeds"
       ],
       "priority": 16,
-      "passes": false,
+      "passes": true,
       "notes": "Store alarms as a JSON array in the settings table under key 'roast_alarms'. This avoids a new DB table and keeps the schema simple. The AlarmMonitor component loads the alarm configuration from settings on mount, then uses $effect to evaluate conditions on each telemetry update. For temp_above: trigger when beanTemp > threshold. For ror_below: trigger when rateOfRise < threshold AND the reference event has been marked. For time_after_event: trigger when elapsed_seconds > event_elapsed + threshold. Use a Set<string> to track fired alarm names per session. The toast notification system can be a simple fixed-position div at the top of the screen with auto-dismiss (5 seconds). For audio: new AudioContext(), create a short oscillator beep (440Hz, 200ms). The settings page alarm table uses inline editing with Tailwind-styled inputs."
     }
   ]

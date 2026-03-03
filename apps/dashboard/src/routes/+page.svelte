@@ -11,6 +11,7 @@
 	import DeviceSelector from '$lib/components/DeviceSelector.svelte';
 	import PhaseStatsPanel from '$lib/components/PhaseStatsPanel.svelte';
 	import AutoEventDetector from '$lib/components/AutoEventDetector.svelte';
+	import AlarmMonitor from '$lib/components/AlarmMonitor.svelte';
 	import { setSelectedDevice, deviceId, telemetry } from '$lib/stores/telemetry.js';
 	import { events, type RoastSession, type RoastEvent } from '$lib/api/client.js';
 	import {
@@ -157,4 +158,5 @@
 </div>
 
 <AutoEventDetector {activeSession} />
+<AlarmMonitor {activeSession} {sessionEvents} />
 <EmergencyStop />

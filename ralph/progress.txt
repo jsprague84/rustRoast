@@ -216,3 +216,19 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - The `downloadFile` helper is separate from `request<T>()` since it returns a blob, not JSON
   - Both buttons share the same `exporting` state to prevent concurrent downloads
 ---
+
+## 2026-03-02 - AP-016
+- Added simple alarm and notification system with configurable alarms, audio alerts, and settings management UI
+- Files changed:
+  - `apps/dashboard/src/lib/components/AlarmMonitor.svelte` (new) — renderless component evaluating alarms against live telemetry; supports temp_above, temp_below, ror_below, time_after_event conditions; Web Audio API beep; fires once per session per alarm
+  - `apps/dashboard/src/routes/+page.svelte` — added AlarmMonitor import and rendering with activeSession and sessionEvents props
+  - `apps/dashboard/src/routes/settings/+page.svelte` — added Roast Alarms section with inline alarm editor (add/edit/delete/enable), alarm sound toggle, save button
+  - `crates/server/src/main.rs` — seeded alarm_sound_enabled and roast_alarms default settings
+  - `crates/server/src/services.rs` — added alarm seeds to setup_test_db()
+- **Learnings for future iterations:**
+  - Alarms stored as JSON array in settings (key: 'roast_alarms') — avoids new DB table for simple config data
+  - Web Audio API beep: new AudioContext() → createOscillator(440Hz) → createGain(0.3) → play for 200ms
+  - AlarmMonitor follows same pattern as AutoEventDetector: renderless Svelte component with $effect for evaluation
+  - Each alarm fires at most once per session using a Set<string> of alarm names, reset on session change
+  - reference_event support: for ror_below and time_after_event, check if the reference event has occurred in sessionEvents before triggering
+---
