@@ -204,3 +204,15 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - CHARGE is always index 0 in the telemetry array (first reading)
   - Event-to-index mapping: find nearest telemetry point by elapsed_seconds proximity
 ---
+
+## 2026-03-02 - AP-015
+- Added data export UI with CSV and Artisan (.alog) download buttons on session detail page
+- Files changed:
+  - `apps/dashboard/src/lib/api/client.ts` — added `downloadFile()` helper for blob downloads with auth headers
+  - `apps/dashboard/src/routes/sessions/[id]/+page.svelte` — added CSV and .alog export buttons (shown only for completed sessions), handleExport() function with loading state and error handling
+- **Learnings for future iterations:**
+  - Browser file download pattern: fetch → blob → URL.createObjectURL → anchor.click → revokeObjectURL
+  - Export buttons only show for `status === 'completed'` — prevents exporting incomplete/active sessions
+  - The `downloadFile` helper is separate from `request<T>()` since it returns a blob, not JSON
+  - Both buttons share the same `exporting` state to prevent concurrent downloads
+---

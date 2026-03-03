@@ -296,7 +296,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 15,
-      "passes": false,
+      "passes": true,
       "notes": "For browser file downloads, use fetch() to get the response, create a Blob, generate a URL via URL.createObjectURL(), create an anchor element, set href and download attributes, click programmatically, then revoke the URL. The export dropdown can use a simple button group or a native <select> styled with Tailwind. Place alongside the existing 'Delete' and 'Save as Profile' buttons on the session detail page header. Use lucide-svelte icons: Download for the export button. The API endpoints require auth — pass the bearer token in the fetch header (use the existing request() helper from client.ts or add an exportBlob helper)."
     },
     {
