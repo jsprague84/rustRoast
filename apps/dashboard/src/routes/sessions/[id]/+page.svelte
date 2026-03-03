@@ -65,7 +65,8 @@
 				time_seconds: t.elapsed_seconds,
 				target_temp: t.bean_temp!,
 				fan_speed: t.fan_pwm != null ? Math.round(t.fan_pwm / 2.55) : null,
-				notes: null
+				notes: null,
+				target_env_temp: t.env_temp ?? null
 			}));
 
 		const firstTemp = points[0]?.target_temp ?? null;

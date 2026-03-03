@@ -283,9 +283,7 @@ impl RoastSessionService {
         let first_crack_event = events
             .iter()
             .find(|e| e.event_type == RoastEventType::FirstCrackStart);
-        let drop_event = events
-            .iter()
-            .find(|e| e.event_type == RoastEventType::Drop);
+        let drop_event = events.iter().find(|e| e.event_type == RoastEventType::Drop);
 
         // Compute development_time_ratio: DTR = (total_time - fc_start) / total_time
         let development_time_ratio = match (total_time_seconds, first_crack_event) {
@@ -300,9 +298,7 @@ impl RoastSessionService {
 
         // Compute weight_loss_pct
         let weight_loss_pct = match (existing.green_weight, existing.roasted_weight) {
-            (Some(green), Some(roasted)) if green > 0.0 => {
-                Some((green - roasted) / green * 100.0)
-            }
+            (Some(green), Some(roasted)) if green > 0.0 => Some((green - roasted) / green * 100.0),
             _ => None,
         };
 
@@ -333,9 +329,7 @@ impl RoastSessionService {
         };
 
         let avg_ror_development = match (first_crack_event, end_seconds) {
-            (Some(fc), Some(end)) => {
-                self.avg_ror_in_range(id, fc.elapsed_seconds, end).await?
-            }
+            (Some(fc), Some(end)) => self.avg_ror_in_range(id, fc.elapsed_seconds, end).await?,
             _ => None,
         };
 
@@ -407,11 +401,7 @@ impl RoastSessionService {
 
     /// Compute AUC (Area Under the Curve) using the trapezoidal rule on bean_temp.
     /// Result is in °C·min units. Base temp and start event are read from settings.
-    async fn compute_auc(
-        &self,
-        session_id: &str,
-        events: &[RoastEvent],
-    ) -> Result<Option<f32>> {
+    async fn compute_auc(&self, session_id: &str, events: &[RoastEvent]) -> Result<Option<f32>> {
         // Read settings
         let base_temp: f32 = sqlx::query_scalar::<_, String>(
             "SELECT value FROM settings WHERE key = 'auc_base_temp'",
@@ -576,8 +566,8 @@ impl RoastSessionService {
             let point = sqlx::query_as::<_, ProfilePoint>(
                 r#"
                 INSERT INTO profile_points (
-                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at, target_env_temp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING *
                 "#,
             )
@@ -588,6 +578,7 @@ impl RoastSessionService {
             .bind(point_req.fan_speed)
             .bind(&point_req.notes)
             .bind(now)
+            .bind(point_req.target_env_temp)
             .fetch_one(&self.db)
             .await?;
 
@@ -686,8 +677,8 @@ impl RoastSessionService {
             sqlx::query(
                 r#"
                 INSERT INTO profile_points (
-                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at, target_env_temp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&point_id)
@@ -697,6 +688,7 @@ impl RoastSessionService {
             .bind(point_req.fan_speed)
             .bind(&point_req.notes)
             .bind(now)
+            .bind(point_req.target_env_temp)
             .execute(&mut *tx)
             .await?;
         }
@@ -734,6 +726,7 @@ impl RoastSessionService {
                 } else {
                     None
                 },
+                target_env_temp: None,
             });
         }
 
@@ -894,6 +887,13 @@ impl RoastSessionService {
         session_id: &str,
         req: CreateCuppingRequest,
     ) -> Result<CuppingWithAttributes> {
+        // Delete any existing cupping for this session (upsert semantics)
+        // CASCADE will also delete associated cupping_attributes
+        sqlx::query("DELETE FROM cupping_scores WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.db)
+            .await?;
+
         let cupping_id = Uuid::new_v4().to_string();
         let framework = req.scoring_framework.unwrap_or_else(|| "sca".to_string());
 
@@ -1009,6 +1009,12 @@ impl RoastSessionService {
         if !profile_name.is_empty() {
             csv.push_str(&format!("# Profile: {}\n", profile_name));
         }
+        if let Some(gw) = session.green_weight {
+            csv.push_str(&format!("# Green Weight: {}g\n", gw));
+        }
+        if let Some(rw) = session.roasted_weight {
+            csv.push_str(&format!("# Roasted Weight: {}g\n", rw));
+        }
 
         csv.push_str(
             "elapsed_seconds,bean_temp,env_temp,rate_of_rise,heater_pwm,fan_pwm,setpoint\n",
@@ -1030,11 +1036,7 @@ impl RoastSessionService {
             .start_time
             .map(|dt| dt.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| session.created_at.format("%Y-%m-%d").to_string());
-        let filename = format!(
-            "{}_{}.csv",
-            session.name.replace(' ', "_"),
-            date_str
-        );
+        let filename = format!("{}_{}.csv", session.name.replace(' ', "_"), date_str);
 
         Ok(Some((csv, filename)))
     }
@@ -1061,8 +1063,8 @@ impl RoastSessionService {
             .collect();
 
         // Build timeindex: [CHARGE, DRY, FCs, FCe, SCs, SCe, DROP, COOL]
+        // CHARGE is handled separately (always index 0), so event_map starts at DRY
         let event_map = [
-            "drop",               // CHARGE (first event at t=0)
             "drying_end",         // DRY
             "first_crack_start",  // FCs
             "first_crack_end",    // FCe
@@ -1075,7 +1077,7 @@ impl RoastSessionService {
         let charge_idx: i64 = if !timex.is_empty() { 0 } else { -1 };
 
         let mut timeindex: Vec<i64> = vec![charge_idx];
-        for event_type in &event_map[1..] {
+        for event_type in &event_map {
             let idx = events
                 .iter()
                 .find(|e| e.event_type.to_string() == *event_type)
@@ -1136,11 +1138,7 @@ impl RoastSessionService {
             .start_time
             .map(|dt| dt.format("%Y-%m-%d").to_string())
             .unwrap_or_else(|| session.created_at.format("%Y-%m-%d").to_string());
-        let filename = format!(
-            "{}_{}.alog",
-            session.name.replace(' ', "_"),
-            date_str
-        );
+        let filename = format!("{}_{}.alog", session.name.replace(' ', "_"), date_str);
 
         Ok(Some((alog, filename)))
     }
@@ -1754,7 +1752,6 @@ impl DeviceService {
         tx.commit().await?;
         Ok(result)
     }
-
 }
 
 #[cfg(test)]
@@ -1783,6 +1780,7 @@ mod tests {
             include_str!("../migrations/004_session_statistics.sql"),
             include_str!("../migrations/005_auc_value.sql"),
             include_str!("../migrations/006_cupping_scores.sql"),
+            include_str!("../migrations/007_profile_env_temp.sql"),
         ];
         for migration_sql in migrations {
             for statement in migration_sql.split(';') {
@@ -1813,7 +1811,10 @@ mod tests {
             ("auto_dry_temp", "150"),
             ("auto_event_detection", "true"),
             ("alarm_sound_enabled", "true"),
-            ("roast_alarms", r#"[{"name":"High Temp Warning","condition_type":"temp_above","threshold":230,"enabled":true},{"name":"FC Approaching","condition_type":"temp_above","threshold":195,"enabled":true},{"name":"Low RoR Warning","condition_type":"ror_below","threshold":5.0,"reference_event":"first_crack_start","enabled":true}]"#),
+            (
+                "roast_alarms",
+                r#"[{"name":"High Temp Warning","condition_type":"temp_above","threshold":230,"enabled":true},{"name":"FC Approaching","condition_type":"temp_above","threshold":195,"enabled":true},{"name":"Low RoR Warning","condition_type":"ror_below","threshold":5.0,"reference_event":"first_crack_start","enabled":true}]"#,
+            ),
         ] {
             let _ = sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
                 .bind(key)
@@ -2448,12 +2449,14 @@ mod tests {
                         target_temp: 180.0,
                         fan_speed: Some(80),
                         notes: None,
+                        target_env_temp: None,
                     },
                     CreateProfilePointRequest {
                         time_seconds: 300,
                         target_temp: 200.0,
                         fan_speed: None,
                         notes: None,
+                        target_env_temp: None,
                     },
                 ],
             })
@@ -2481,18 +2484,21 @@ mod tests {
                             target_temp: 185.0,
                             fan_speed: Some(90),
                             notes: None,
+                            target_env_temp: None,
                         },
                         CreateProfilePointRequest {
                             time_seconds: 200,
                             target_temp: 195.0,
                             fan_speed: None,
                             notes: None,
+                            target_env_temp: None,
                         },
                         CreateProfilePointRequest {
                             time_seconds: 500,
                             target_temp: 220.0,
                             fan_speed: Some(60),
                             notes: Some("Finish".to_string()),
+                            target_env_temp: None,
                         },
                     ],
                 },
@@ -2651,11 +2657,17 @@ mod tests {
 
         // DTR: (600 - 400) / 600 = 200/600 ≈ 0.333
         let dtr = completed.development_time_ratio.unwrap();
-        assert!((dtr - 0.333).abs() < 0.01, "DTR should be ~0.333, got {dtr}");
+        assert!(
+            (dtr - 0.333).abs() < 0.01,
+            "DTR should be ~0.333, got {dtr}"
+        );
 
         // Weight loss: (200 - 170) / 200 * 100 = 15%
         let wl = completed.weight_loss_pct.unwrap();
-        assert!((wl - 15.0).abs() < 0.1, "Weight loss should be 15%, got {wl}");
+        assert!(
+            (wl - 15.0).abs() < 0.1,
+            "Weight loss should be 15%, got {wl}"
+        );
 
         // Max RoR should be 15.0
         let max_ror = completed.max_ror.unwrap();
@@ -2728,7 +2740,16 @@ mod tests {
             .await
             .unwrap();
         service
-            .add_telemetry_point(&session.id, 120.0, Some(200.0), None, None, None, None, None)
+            .add_telemetry_point(
+                &session.id,
+                120.0,
+                Some(200.0),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 

@@ -330,19 +330,10 @@ async fn main() {
         )
         .route("/api/sessions/:id/telemetry", post(api_add_telemetry_point))
         // Data Export API (AP-014)
-        .route(
-            "/api/sessions/:id/export/csv",
-            get(api_export_csv),
-        )
-        .route(
-            "/api/sessions/:id/export/artisan",
-            get(api_export_artisan),
-        )
+        .route("/api/sessions/:id/export/csv", get(api_export_csv))
+        .route("/api/sessions/:id/export/artisan", get(api_export_artisan))
         // Cupping Notes API (AP-012)
-        .route(
-            "/api/sessions/:session_id/cupping",
-            get(api_get_cupping),
-        )
+        .route("/api/sessions/:session_id/cupping", get(api_get_cupping))
         .route(
             "/api/sessions/:session_id/cupping",
             post(api_create_cupping),
@@ -1657,31 +1648,25 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
-    sqlx::query(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('auc_base_temp', '0');",
-    )
-    .execute(&pool)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES ('auc_base_temp', '0');")
+        .execute(&pool)
+        .await?;
     sqlx::query(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('auc_start_event', 'charge');",
     )
     .execute(&pool)
     .await?;
-    sqlx::query(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('ror_window_seconds', '30');",
-    )
-    .execute(&pool)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES ('ror_window_seconds', '30');")
+        .execute(&pool)
+        .await?;
     sqlx::query(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('ror_smoothing_algorithm', 'moving_average');",
     )
     .execute(&pool)
     .await?;
-    sqlx::query(
-        "INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_dry_temp', '150');",
-    )
-    .execute(&pool)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_dry_temp', '150');")
+        .execute(&pool)
+        .await?;
     sqlx::query(
         "INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_event_detection', 'true');",
     )
@@ -1706,6 +1691,7 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
         include_str!("../migrations/004_session_statistics.sql"),
         include_str!("../migrations/005_auc_value.sql"),
         include_str!("../migrations/006_cupping_scores.sql"),
+        include_str!("../migrations/007_profile_env_temp.sql"),
     ];
     for migration_sql in migrations {
         for statement in migration_sql.split(';') {
@@ -2256,11 +2242,7 @@ async fn api_create_cupping(
     Path(session_id): Path<String>,
     Json(req): Json<CreateCuppingRequest>,
 ) -> Response {
-    match state
-        .session_service
-        .create_cupping(&session_id, req)
-        .await
-    {
+    match state.session_service.create_cupping(&session_id, req).await {
         Ok(cupping) => (StatusCode::CREATED, Json(cupping)).into_response(),
         Err(e) => {
             tracing::error!(?e, "Failed to create cupping");

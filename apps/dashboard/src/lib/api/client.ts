@@ -302,6 +302,7 @@ export interface ProfilePoint {
 	target_temp: number;
 	fan_speed: number | null;
 	notes: string | null;
+	target_env_temp: number | null;
 }
 
 export interface CreateProfileRequest {
@@ -312,7 +313,7 @@ export interface CreateProfileRequest {
 	target_end_temp?: number;
 	preheat_temp?: number;
 	charge_temp?: number;
-	points: { time_seconds: number; target_temp: number; fan_speed?: number; notes?: string }[];
+	points: { time_seconds: number; target_temp: number; fan_speed?: number; notes?: string; target_env_temp?: number }[];
 }
 
 export const profiles = {

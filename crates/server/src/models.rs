@@ -73,6 +73,7 @@ pub struct ProfilePoint {
     pub fan_speed: Option<i32>, // 0-100
     pub notes: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub target_env_temp: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -195,6 +196,7 @@ pub struct CreateProfilePointRequest {
     pub target_temp: f32,
     pub fan_speed: Option<i32>,
     pub notes: Option<String>,
+    pub target_env_temp: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]

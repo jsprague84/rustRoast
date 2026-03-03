@@ -6,11 +6,13 @@
 	import { Trash2, Table, LineChart, ArrowRightLeft } from 'lucide-svelte';
 	import type { GraphicComponentOption } from 'echarts/components';
 	import ProfileTransposer from '$lib/components/ProfileTransposer.svelte';
+	import { fitNaturalCubicSpline, evaluateSplineGrid, evaluateDerivativeGrid } from '$lib/utils/spline.js';
 
 	interface DesignerPoint {
 		time_seconds: number;
 		target_temp: number;
 		fan_speed: number | null;
+		target_env_temp: number | null;
 	}
 
 	const SYMBOL_SIZE = 14;
@@ -38,7 +40,8 @@
 					.map((p) => ({
 						time_seconds: p.time_seconds,
 						target_temp: p.target_temp,
-						fan_speed: p.fan_speed
+						fan_speed: p.fan_speed,
+						target_env_temp: p.target_env_temp ?? null
 					}))
 			: []
 	);
@@ -61,7 +64,8 @@
 		const newPoint: DesignerPoint = {
 			time_seconds: Math.round(timeSec),
 			target_temp: Math.round(temp * 10) / 10,
-			fan_speed: null
+			fan_speed: null,
+			target_env_temp: null
 		};
 		points.push(newPoint);
 		points.sort((a, b) => a.time_seconds - b.time_seconds);
@@ -179,39 +183,6 @@
 		});
 	}
 
-	// Interpolate temperature at a given time (seconds) from sorted points
-	function interpolateTemp(sorted: DesignerPoint[], t: number): number | null {
-		if (sorted.length === 0) return null;
-		if (t <= sorted[0].time_seconds) return sorted[0].target_temp;
-		if (t >= sorted[sorted.length - 1].time_seconds) return sorted[sorted.length - 1].target_temp;
-		for (let i = 0; i < sorted.length - 1; i++) {
-			const p0 = sorted[i];
-			const p1 = sorted[i + 1];
-			if (t >= p0.time_seconds && t <= p1.time_seconds) {
-				const frac = (t - p0.time_seconds) / (p1.time_seconds - p0.time_seconds);
-				return p0.target_temp + frac * (p1.target_temp - p0.target_temp);
-			}
-		}
-		return null;
-	}
-
-	// Compute simulated RoR data at 5-second intervals using central difference
-	function computeRoR(sorted: DesignerPoint[]): [number, number][] {
-		if (sorted.length < 2) return [];
-		const maxTime = sorted[sorted.length - 1].time_seconds;
-		const result: [number, number][] = [];
-		const dt = 5;
-		for (let t = 0; t <= maxTime; t += dt) {
-			const tBefore = interpolateTemp(sorted, t - dt);
-			const tAfter = interpolateTemp(sorted, t + dt);
-			if (tBefore !== null && tAfter !== null) {
-				const ror = ((tAfter - tBefore) / (2 * dt)) * 60; // °C/min
-				result.push([t, Math.round(ror * 10) / 10]);
-			}
-		}
-		return result;
-	}
-
 	// Find time (seconds) where interpolated temp crosses a threshold
 	function findTempCrossing(sorted: DesignerPoint[], threshold: number): number | null {
 		if (sorted.length < 2) return null;
@@ -244,18 +215,35 @@
 	// Chart options — includes graphic overlay for draggable points
 	let chartOption = $derived.by<ECOption>(() => {
 		const sorted = sortedPoints();
-		const chartData = sorted.map((p) => [p.time_seconds, p.target_temp]);
 
 		const times = sorted.map((p) => p.time_seconds);
 		const temps = sorted.map((p) => p.target_temp);
 		const xRange = axisRange(times, 720, 30); // default 12 min for empty chart
 		const yRange = axisRange(temps, 250, 20);  // default 250°C for empty chart
+		const maxTime = sorted.length > 0 ? sorted[sorted.length - 1].time_seconds : 0;
 
-		// Compute simulated RoR
-		const rorData = computeRoR(sorted);
+		// Fit cubic spline for BT curve
+		const btSpline = fitNaturalCubicSpline(sorted.map((p) => ({ x: p.time_seconds, y: p.target_temp })));
+		const btCurveData = sorted.length >= 2
+			? evaluateSplineGrid(btSpline, 0, maxTime, 2)
+			: sorted.map((p): [number, number] => [p.time_seconds, p.target_temp]);
+
+		// Compute RoR from spline derivative (°C/s → °C/min)
+		const rorData: [number, number][] = sorted.length >= 2
+			? evaluateDerivativeGrid(btSpline, 0, maxTime, 5).map(([t, dy]) => [t, Math.round(dy * 60 * 10) / 10])
+			: [];
 		const rorValues = rorData.map(([, v]) => v);
 		const rorMax = rorValues.length > 0 ? Math.max(...rorValues, 5) : 30;
 		const rorMin = rorValues.length > 0 ? Math.min(...rorValues, 0) : 0;
+
+		// ET (Environment Temp) spline — only when ET data exists
+		const etPoints = sorted.filter((p) => p.target_env_temp !== null);
+		const hasEtData = etPoints.length >= 2;
+		let etCurveData: [number, number][] = [];
+		if (hasEtData) {
+			const etSpline = fitNaturalCubicSpline(etPoints.map((p) => ({ x: p.time_seconds, y: p.target_env_temp! })));
+			etCurveData = evaluateSplineGrid(etSpline, 0, maxTime, 2);
+		}
 
 		// Fan speed data (only points with non-null fan_speed)
 		const fanData = sorted
@@ -309,7 +297,7 @@
 					const m = Math.floor(t / 60);
 					const s = Math.round(t % 60);
 					const unit = p.seriesName === 'Simulated RoR' ? '°C/min' : p.seriesName === 'Fan Speed' ? '%' : '°C';
-					return `Time: ${m}:${s.toString().padStart(2, '0')}<br/>${p.seriesName}: ${val}${unit}`;
+					return `Time: ${m}:${s.toString().padStart(2, '0')}<br/>${p.seriesName}: ${val.toFixed(1)}${unit}`;
 				}
 			},
 			xAxis: {
@@ -354,9 +342,9 @@
 			series: [
 				{
 					id: 'profile',
-					name: 'Profile',
+					name: 'BT Profile',
 					type: 'line',
-					data: chartData,
+					data: btCurveData,
 					itemStyle: { color: '#f59e0b' },
 					lineStyle: { width: 2 },
 					showSymbol: false,
@@ -369,6 +357,17 @@
 						data: markLineData
 					} : undefined
 				},
+				...(hasEtData ? [{
+					id: 'et',
+					name: 'ET Profile',
+					type: 'line' as const,
+					data: etCurveData,
+					itemStyle: { color: '#60a5fa' },
+					lineStyle: { width: 1.5, type: 'dashed' as const, color: '#60a5fa' },
+					showSymbol: false,
+					symbolSize: 0,
+					silent: true
+				}] : []),
 				{
 					id: 'ror',
 					name: 'Simulated RoR',
@@ -424,7 +423,8 @@
 				points: sorted.map((p) => ({
 					time_seconds: p.time_seconds,
 					target_temp: p.target_temp,
-					fan_speed: p.fan_speed ?? undefined
+					fan_speed: p.fan_speed ?? undefined,
+					target_env_temp: p.target_env_temp ?? undefined
 				}))
 			};
 
@@ -580,7 +580,8 @@
 						<thead>
 							<tr class="border-b border-border text-left text-xs text-muted-foreground">
 								<th class="px-3 py-2">Time (s)</th>
-								<th class="px-3 py-2">Temp (°C)</th>
+								<th class="px-3 py-2">BT (°C)</th>
+								<th class="px-3 py-2">ET (°C)</th>
 								<th class="px-3 py-2">Fan Speed</th>
 								<th class="px-3 py-2 w-10"></th>
 							</tr>
@@ -613,6 +614,20 @@
 												if (!isNaN(val) && val >= 0) points[realIndex].target_temp = val;
 											}}
 											class="w-20 rounded border border-border bg-input px-2 py-1 text-sm text-foreground"
+											step="0.1"
+											min="0"
+										/>
+									</td>
+									<td class="px-3 py-1.5">
+										<input
+											type="number"
+											value={point.target_env_temp ?? ''}
+											oninput={(e) => {
+												const v = (e.target as HTMLInputElement).value;
+												points[realIndex].target_env_temp = v === '' ? null : parseFloat(v);
+											}}
+											class="w-20 rounded border border-border bg-input px-2 py-1 text-sm text-foreground"
+											placeholder="-"
 											step="0.1"
 											min="0"
 										/>
@@ -654,7 +669,7 @@
 		{@const point = points[selectedIndex]}
 		<div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-4">
 			<h3 class="mb-2 text-sm font-semibold text-amber-400">Selected Point</h3>
-			<div class="grid gap-3 sm:grid-cols-3">
+			<div class="grid gap-3 sm:grid-cols-4">
 				<div>
 					<label for="edit-time" class="mb-1 block text-xs font-medium text-muted-foreground">Time (seconds)</label>
 					<input
@@ -666,12 +681,28 @@
 					/>
 				</div>
 				<div>
-					<label for="edit-temp" class="mb-1 block text-xs font-medium text-muted-foreground">Temperature (°C)</label>
+					<label for="edit-temp" class="mb-1 block text-xs font-medium text-muted-foreground">BT (°C)</label>
 					<input
 						id="edit-temp"
 						type="number"
 						bind:value={point.target_temp}
 						class="w-full rounded border border-border bg-input px-3 py-1.5 text-sm text-foreground"
+						step="0.1"
+						min="0"
+					/>
+				</div>
+				<div>
+					<label for="edit-et" class="mb-1 block text-xs font-medium text-muted-foreground">ET (°C)</label>
+					<input
+						id="edit-et"
+						type="number"
+						value={point.target_env_temp ?? ''}
+						oninput={(e) => {
+							const v = (e.target as HTMLInputElement).value;
+							point.target_env_temp = v === '' ? null : parseFloat(v);
+						}}
+						class="w-full rounded border border-border bg-input px-3 py-1.5 text-sm text-foreground"
+						placeholder="Optional"
 						step="0.1"
 						min="0"
 					/>
@@ -704,7 +735,8 @@
 			points = transformed.map((p) => ({
 				time_seconds: p.time_seconds,
 				target_temp: p.target_temp,
-				fan_speed: p.fan_speed
+				fan_speed: p.fan_speed,
+				target_env_temp: p.target_env_temp
 			}));
 			selectedIndex = null;
 			showTransposer = false;

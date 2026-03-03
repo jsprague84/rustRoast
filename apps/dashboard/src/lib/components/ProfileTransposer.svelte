@@ -1,10 +1,12 @@
 <script lang="ts">
 	import Chart, { type ECOption } from '$lib/components/Chart.svelte';
+	import { fitNaturalCubicSpline, evaluateSplineGrid, evaluateDerivativeGrid } from '$lib/utils/spline.js';
 
 	interface TransposerPoint {
 		time_seconds: number;
 		target_temp: number;
 		fan_speed: number | null;
+		target_env_temp: number | null;
 	}
 
 	const {
@@ -32,35 +34,48 @@
 			const newTime = Math.max(1, Math.round(p.time_seconds * timeScale));
 			const scaledTemp = meanTemp + (p.target_temp - meanTemp) * tempScale;
 			const newTemp = Math.round((scaledTemp + tempShift) * 10) / 10;
+
+			// Apply same transforms to ET if present
+			let newEt: number | null = null;
+			if (p.target_env_temp !== null) {
+				const scaledEt = meanTemp + (p.target_env_temp - meanTemp) * tempScale;
+				newEt = Math.max(0, Math.round((scaledEt + tempShift) * 10) / 10);
+			}
+
 			return {
 				time_seconds: newTime,
 				target_temp: Math.max(0, newTemp),
-				fan_speed: p.fan_speed
+				fan_speed: p.fan_speed,
+				target_env_temp: newEt
 			};
 		});
 	});
-
-	// Simulated RoR for transposed curve
-	function computeSimpleRoR(pts: TransposerPoint[]): [number, number][] {
-		if (pts.length < 2) return [];
-		const result: [number, number][] = [];
-		for (let i = 0; i < pts.length - 1; i++) {
-			const dt = pts[i + 1].time_seconds - pts[i].time_seconds;
-			if (dt > 0) {
-				const ror = ((pts[i + 1].target_temp - pts[i].target_temp) / dt) * 60;
-				const midTime = (pts[i].time_seconds + pts[i + 1].time_seconds) / 2;
-				result.push([midTime, Math.round(ror * 10) / 10]);
-			}
-		}
-		return result;
-	}
 
 	// Chart option for preview
 	let chartOption = $derived.by<ECOption>(() => {
 		const original = [...points].sort((a, b) => a.time_seconds - b.time_seconds);
 		const originalData = original.map((p) => [p.time_seconds, p.target_temp]);
-		const transposedData = transposed.map((p) => [p.time_seconds, p.target_temp]);
-		const rorData = computeSimpleRoR(transposed);
+
+		// Transposed BT spline
+		const maxTime = transposed.length > 0 ? transposed[transposed.length - 1].time_seconds : 0;
+		const btSpline = fitNaturalCubicSpline(transposed.map((p) => ({ x: p.time_seconds, y: p.target_temp })));
+		const transposedData = transposed.length >= 2
+			? evaluateSplineGrid(btSpline, 0, maxTime, 2)
+			: transposed.map((p): [number, number] => [p.time_seconds, p.target_temp]);
+
+		// Transposed RoR from spline derivative
+		const rorData: [number, number][] = transposed.length >= 2
+			? evaluateDerivativeGrid(btSpline, 0, maxTime, 5).map(([t, dy]) => [t, Math.round(dy * 60 * 10) / 10])
+			: [];
+
+		// ET spline (transposed)
+		const etPoints = transposed.filter((p) => p.target_env_temp !== null);
+		const hasEtData = etPoints.length >= 2;
+		let etCurveData: [number, number][] = [];
+		if (hasEtData) {
+			const etSpline = fitNaturalCubicSpline(etPoints.map((p) => ({ x: p.time_seconds, y: p.target_env_temp! })));
+			etCurveData = evaluateSplineGrid(etSpline, 0, maxTime, 2);
+		}
 
 		return {
 			animation: false,
@@ -121,6 +136,15 @@
 					lineStyle: { width: 2, color: '#f59e0b' },
 					showSymbol: false
 				},
+				...(hasEtData ? [{
+					name: 'Transposed ET',
+					type: 'line' as const,
+					data: etCurveData,
+					itemStyle: { color: '#60a5fa' },
+					lineStyle: { width: 1.5, type: 'dashed' as const, color: '#60a5fa' },
+					showSymbol: false,
+					silent: true
+				}] : []),
 				{
 					name: 'Transposed RoR',
 					type: 'line',
