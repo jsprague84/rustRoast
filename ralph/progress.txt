@@ -144,3 +144,19 @@ Started: Mon Mar  2 09:04:16 PM CST 2026
   - ECharts handles negative x-axis values well for event-aligned charts
   - Set mutation in Svelte 5: create new Set from old, modify, reassign (selectedIds = next)
 ---
+
+## 2026-03-02 - AP-011
+- Added auto-event detection for DRY END and First Crack Start
+- Files changed:
+  - `apps/dashboard/src/lib/components/AutoEventDetector.svelte` (new) — renderless component subscribing to telemetry stores, fires once-per-session suggestions
+  - `apps/dashboard/src/lib/stores/notifications.ts` — added NotificationAction interface and optional action param to add()
+  - `apps/dashboard/src/lib/components/NotificationToast.svelte` — renders action button when notification has action
+  - `apps/dashboard/src/routes/+page.svelte` — added AutoEventDetector component
+  - `crates/server/src/main.rs` — seeded auto_dry_temp and auto_event_detection settings
+  - `crates/server/src/services.rs` — added seeds to setup_test_db()
+- **Learnings for future iterations:**
+  - Notification actions: optional `{label, callback}` on notifications for inline user actions
+  - Auto-detection components are best as renderless Svelte components (no template, just $effect logic)
+  - Each detection must fire at most once per session — track with session-level state that resets on session change
+  - AutoFC depends on RoR store value; track consecutive readings below threshold (not just instantaneous)
+---
