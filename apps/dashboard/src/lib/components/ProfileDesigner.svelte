@@ -130,57 +130,90 @@
 	function buildGraphic(instance: ReturnType<NonNullable<typeof chartComponent>['getInstance']>): GraphicComponentOption[] {
 		if (!instance) return [];
 		const sorted = sortedPoints();
-		return sorted.map((pt) => {
-			const pos = instance.convertToPixel('grid', [pt.time_seconds, pt.target_temp]);
-			if (!pos) return { type: 'circle', ignore: true };
+		const elements: GraphicComponentOption[] = [];
 
+		for (const pt of sorted) {
 			// Map back to the real index in the unsorted `points` array
 			const realIdx = points.findIndex(
 				(p) => p.time_seconds === pt.time_seconds && p.target_temp === pt.target_temp
 			);
-
 			const isSelected = selectedIndex === realIdx;
-			const [px, py] = pos as number[];
 
-			return {
-				type: 'circle',
-				x: px,
-				y: py,
-				shape: { r: SYMBOL_SIZE / 2 },
-				style: {
-					fill: isSelected ? '#ef4444' : '#f59e0b',
-					stroke: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
-					lineWidth: isSelected ? 3 : 1
-				},
-				draggable: true,
-				z: 100,
-				cursor: 'move',
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				ondrag(this: any) {
-					dragging = true;
-					const newVal = instance.convertFromPixel('grid', [this.x, this.y] as [number, number]);
-					if (!newVal || realIdx < 0) return;
-					const [newTime, newTemp] = newVal as number[];
-					points[realIdx].time_seconds = Math.max(0, Math.round(newTime));
-					points[realIdx].target_temp = Math.max(0, Math.round(newTemp * 10) / 10);
-				},
-				// eslint-disable-next-line @typescript-eslint/no-explicit-any
-				ondragend(this: any) {
-					// Re-sort after drag completes
-					points.sort((a, b) => a.time_seconds - b.time_seconds);
-					// Keep the same point selected (its index may have changed)
-					if (realIdx >= 0 && realIdx < points.length) {
-						const movedPt = points[realIdx];
-						selectedIndex = points.findIndex(
-							(p) => p === movedPt
-						);
+			// BT handle (amber)
+			const btPos = instance.convertToPixel('grid', [pt.time_seconds, pt.target_temp]);
+			if (btPos) {
+				const [px, py] = btPos as number[];
+				elements.push({
+					type: 'circle',
+					x: px,
+					y: py,
+					shape: { r: SYMBOL_SIZE / 2 },
+					style: {
+						fill: isSelected ? '#ef4444' : '#f59e0b',
+						stroke: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
+						lineWidth: isSelected ? 3 : 1
+					},
+					draggable: true,
+					z: 100,
+					cursor: 'move',
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					ondrag(this: any) {
+						dragging = true;
+						const newVal = instance.convertFromPixel('grid', [this.x, this.y] as [number, number]);
+						if (!newVal || realIdx < 0) return;
+						const [newTime, newTemp] = newVal as number[];
+						points[realIdx].time_seconds = Math.max(0, Math.round(newTime));
+						points[realIdx].target_temp = Math.max(0, Math.round(newTemp * 10) / 10);
+					},
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					ondragend(this: any) {
+						points.sort((a, b) => a.time_seconds - b.time_seconds);
+						if (realIdx >= 0 && realIdx < points.length) {
+							const movedPt = points[realIdx];
+							selectedIndex = points.findIndex((p) => p === movedPt);
+						}
+					},
+					onclick() {
+						selectedIndex = realIdx >= 0 ? realIdx : null;
 					}
-				},
-				onclick() {
-					selectedIndex = realIdx >= 0 ? realIdx : null;
+				});
+			}
+
+			// ET handle (blue) — only for points that have an ET value
+			if (pt.target_env_temp !== null) {
+				const etPos = instance.convertToPixel('grid', [pt.time_seconds, pt.target_env_temp]);
+				if (etPos) {
+					const [epx, epy] = etPos as number[];
+					elements.push({
+						type: 'circle',
+						x: epx,
+						y: epy,
+						shape: { r: SYMBOL_SIZE / 2 - 1 },
+						style: {
+							fill: isSelected ? '#ef4444' : '#60a5fa',
+							stroke: isSelected ? '#fff' : 'rgba(255,255,255,0.6)',
+							lineWidth: isSelected ? 3 : 1
+						},
+						draggable: 'vertical' as unknown as boolean,
+						z: 99,
+						cursor: 'ns-resize',
+						// eslint-disable-next-line @typescript-eslint/no-explicit-any
+						ondrag(this: any) {
+							dragging = true;
+							const newVal = instance.convertFromPixel('grid', [this.x, this.y] as [number, number]);
+							if (!newVal || realIdx < 0) return;
+							const [, newTemp] = newVal as number[];
+							points[realIdx].target_env_temp = Math.max(0, Math.round(newTemp * 10) / 10);
+						},
+						onclick() {
+							selectedIndex = realIdx >= 0 ? realIdx : null;
+						}
+					});
 				}
-			};
-		});
+			}
+		}
+
+		return elements;
 	}
 
 	// Find time (seconds) where interpolated temp crosses a threshold
