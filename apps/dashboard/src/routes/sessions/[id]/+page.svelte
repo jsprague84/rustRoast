@@ -213,6 +213,33 @@
 		<!-- Key Temperatures -->
 		<KeyTemperatures telemetry={sessionData.telemetry ?? []} events={sessionEvents} />
 
+		<!-- Roast Metrics -->
+		{#if sessionData.weight_loss_pct != null || sessionData.auc_value != null || sessionData.max_ror != null}
+			<div class="grid gap-3 sm:grid-cols-3">
+				{#if sessionData.weight_loss_pct != null}
+					<div class="rounded-lg border border-border bg-card p-3">
+						<div class="text-xs font-medium text-muted-foreground">Weight Loss</div>
+						<div class="mt-1 text-lg font-semibold text-foreground">{sessionData.weight_loss_pct.toFixed(1)}%</div>
+						{#if sessionData.green_weight != null && sessionData.roasted_weight != null}
+							<div class="mt-0.5 text-xs text-muted-foreground">{sessionData.green_weight}g → {sessionData.roasted_weight}g</div>
+						{/if}
+					</div>
+				{/if}
+				{#if sessionData.auc_value != null}
+					<div class="rounded-lg border border-border bg-card p-3">
+						<div class="text-xs font-medium text-muted-foreground">AUC</div>
+						<div class="mt-1 text-lg font-semibold text-foreground">{Math.round(sessionData.auc_value)} °C·min</div>
+					</div>
+				{/if}
+				{#if sessionData.max_ror != null}
+					<div class="rounded-lg border border-border bg-card p-3">
+						<div class="text-xs font-medium text-muted-foreground">Max RoR</div>
+						<div class="mt-1 text-lg font-semibold text-foreground">{sessionData.max_ror.toFixed(1)} °C/min</div>
+					</div>
+				{/if}
+			</div>
+		{/if}
+
 		<!-- Phase Statistics -->
 		<PhaseStatsPanel
 			events={sessionEvents}

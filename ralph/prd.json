@@ -174,7 +174,7 @@
         "npm run check passes with zero errors"
       ],
       "priority": 9,
-      "passes": false,
+      "passes": true,
       "notes": "This is purely a frontend display story. The backend already computes and returns these values (AP-001 and AP-002). Add a new RoastMetrics.svelte component or extend KeyTemperatures.svelte. The session detail page at /sessions/[id]/+page.svelte fetches SessionWithTelemetry which includes the session object with all fields. Use a grid of metric cards similar to KeyTemperatures (bg-card rounded-lg p-3 pattern). Update the TypeScript interfaces in both $lib/types/session.ts and $lib/api/client.ts to include the new optional fields."
     },
     {
