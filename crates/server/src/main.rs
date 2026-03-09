@@ -329,6 +329,19 @@ async fn main() {
             get(api_get_session_telemetry),
         )
         .route("/api/sessions/:id/telemetry", post(api_add_telemetry_point))
+        // Data Export API (AP-014)
+        .route("/api/sessions/:id/export/csv", get(api_export_csv))
+        .route("/api/sessions/:id/export/artisan", get(api_export_artisan))
+        // Cupping Notes API (AP-012)
+        .route("/api/sessions/:session_id/cupping", get(api_get_cupping))
+        .route(
+            "/api/sessions/:session_id/cupping",
+            post(api_create_cupping),
+        )
+        .route(
+            "/api/sessions/:session_id/cupping",
+            delete(api_delete_cupping),
+        )
         // Roast Events API
         .route(
             "/api/sessions/:session_id/events",
@@ -1700,11 +1713,50 @@ async fn init_db() -> Result<SqlitePool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
+    sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES ('auc_base_temp', '0');")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('auc_start_event', 'charge');",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES ('ror_window_seconds', '30');")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('ror_smoothing_algorithm', 'moving_average');",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_dry_temp', '150');")
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('auto_event_detection', 'true');",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('alarm_sound_enabled', 'true');",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"INSERT OR IGNORE INTO settings (key, value) VALUES ('roast_alarms', '[{"name":"High Temp Warning","condition_type":"temp_above","threshold":230,"enabled":true},{"name":"FC Approaching","condition_type":"temp_above","threshold":195,"enabled":true},{"name":"Low RoR Warning","condition_type":"ror_below","threshold":5.0,"reference_event":"first_crack_start","enabled":true}]');"#,
+    )
+    .execute(&pool)
+    .await?;
 
     // Run migrations
     let migrations: &[&str] = &[
         include_str!("../migrations/001_roast_sessions.sql"),
+        include_str!("../migrations/002_roast_events.sql"),
         include_str!("../migrations/003_device_configuration.sql"),
+        include_str!("../migrations/004_session_statistics.sql"),
+        include_str!("../migrations/005_auc_value.sql"),
+        include_str!("../migrations/006_cupping_scores.sql"),
+        include_str!("../migrations/007_profile_env_temp.sql"),
     ];
     for migration_sql in migrations {
         for statement in migration_sql.split(';') {
@@ -2228,6 +2280,104 @@ async fn api_delete_roast_event(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Failed to delete roast event",
+            )
+                .into_response()
+        }
+    }
+}
+
+// ---- Cupping Notes API (AP-012) ----
+
+async fn api_get_cupping(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Response {
+    match state.session_service.get_cupping(&session_id).await {
+        Ok(Some(cupping)) => Json(serde_json::to_value(cupping).unwrap()).into_response(),
+        Ok(None) => Json(serde_json::Value::Null).into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to get cupping");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to get cupping").into_response()
+        }
+    }
+}
+
+async fn api_create_cupping(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<CreateCuppingRequest>,
+) -> Response {
+    match state.session_service.create_cupping(&session_id, req).await {
+        Ok(cupping) => (StatusCode::CREATED, Json(cupping)).into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to create cupping");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to create cupping",
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn api_delete_cupping(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+) -> Response {
+    match state.session_service.delete_cupping(&session_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to delete cupping");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to delete cupping",
+            )
+                .into_response()
+        }
+    }
+}
+
+// ---- Data Export API (AP-014) ----
+
+async fn api_export_csv(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match state.session_service.export_csv(&id).await {
+        Ok(Some((csv, filename))) => {
+            let headers = [
+                (CONTENT_TYPE, "text/csv; charset=utf-8"),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    &format!("attachment; filename=\"{}\"", filename),
+                ),
+            ];
+            (headers, csv).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "Session not found").into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to export CSV");
+            (StatusCode::INTERNAL_SERVER_ERROR, "Failed to export CSV").into_response()
+        }
+    }
+}
+
+async fn api_export_artisan(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match state.session_service.export_artisan_json(&id).await {
+        Ok(Some((json, filename))) => {
+            let body = serde_json::to_string_pretty(&json).unwrap_or_default();
+            let headers = [
+                (CONTENT_TYPE, "application/json; charset=utf-8"),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    &format!("attachment; filename=\"{}\"", filename),
+                ),
+            ];
+            (headers, body).into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, "Session not found").into_response(),
+        Err(e) => {
+            tracing::error!(?e, "Failed to export Artisan JSON");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to export Artisan JSON",
             )
                 .into_response()
         }

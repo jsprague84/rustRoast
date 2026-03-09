@@ -56,6 +56,27 @@ async function request<T>(
 	return res.json();
 }
 
+export async function downloadFile(path: string, filename: string): Promise<void> {
+	const headers: Record<string, string> = {};
+	const key = getApiKey();
+	if (key) {
+		headers['Authorization'] = `Bearer ${key}`;
+	}
+
+	const res = await fetch(`${BASE_URL}${path}`, { headers });
+	if (!res.ok) {
+		throw new Error(`Export failed: ${res.status}`);
+	}
+
+	const blob = await res.blob();
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+
 // --- Control API (requires auth) ---
 
 export interface ControlApi {
@@ -128,6 +149,17 @@ export interface RoastSession {
 	roasted_weight: number | null;
 	notes: string | null;
 	total_time_seconds: number | null;
+	max_temp: number | null;
+	first_crack_time: number | null;
+	development_time_ratio: number | null;
+	weight_loss_pct: number | null;
+	max_ror: number | null;
+	avg_ror_drying: number | null;
+	avg_ror_maillard: number | null;
+	avg_ror_development: number | null;
+	drying_end_time: number | null;
+	drying_end_temp: number | null;
+	auc_value: number | null;
 }
 
 export interface CreateSessionRequest {
@@ -207,6 +239,47 @@ export const events = {
 		request<void>(`/api/sessions/${sessionId}/events/${eventId}`, { method: 'DELETE' })
 };
 
+// --- Cupping Notes API ---
+
+export interface CuppingAttribute {
+	id: string;
+	cupping_id: string;
+	attribute_name: string;
+	score: number;
+	created_at: string;
+}
+
+export interface CuppingScore {
+	id: string;
+	session_id: string;
+	scoring_framework: string;
+	overall_score: number | null;
+	notes: string | null;
+	created_at: string;
+	updated_at: string;
+	attributes: CuppingAttribute[];
+}
+
+export interface CreateCuppingRequest {
+	scoring_framework?: string;
+	notes?: string;
+	attributes: { name: string; score: number }[];
+}
+
+export const cupping = {
+	get: (sessionId: string) =>
+		request<CuppingScore | null>(`/api/sessions/${sessionId}/cupping`),
+
+	create: (sessionId: string, req: CreateCuppingRequest) =>
+		request<CuppingScore>(`/api/sessions/${sessionId}/cupping`, {
+			method: 'POST',
+			body: JSON.stringify(req)
+		}),
+
+	delete: (sessionId: string) =>
+		request<void>(`/api/sessions/${sessionId}/cupping`, { method: 'DELETE' })
+};
+
 // --- Profiles API ---
 
 export interface RoastProfile {
@@ -229,6 +302,7 @@ export interface ProfilePoint {
 	target_temp: number;
 	fan_speed: number | null;
 	notes: string | null;
+	target_env_temp: number | null;
 }
 
 export interface CreateProfileRequest {
@@ -239,7 +313,7 @@ export interface CreateProfileRequest {
 	target_end_temp?: number;
 	preheat_temp?: number;
 	charge_temp?: number;
-	points: { time_seconds: number; target_temp: number; fan_speed?: number; notes?: string }[];
+	points: { time_seconds: number; target_temp: number; fan_speed?: number; notes?: string; target_env_temp?: number }[];
 }
 
 export const profiles = {

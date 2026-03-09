@@ -32,6 +32,18 @@ pub struct RoastSession {
     pub total_time_seconds: Option<i32>,
     pub first_crack_time: Option<i32>,
     pub development_time_ratio: Option<f32>,
+
+    // Enhanced statistics (AP-001)
+    pub weight_loss_pct: Option<f32>,
+    pub max_ror: Option<f32>,
+    pub avg_ror_drying: Option<f32>,
+    pub avg_ror_maillard: Option<f32>,
+    pub avg_ror_development: Option<f32>,
+    pub drying_end_time: Option<i32>,
+    pub drying_end_temp: Option<f32>,
+
+    // AUC (AP-002)
+    pub auc_value: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -61,6 +73,7 @@ pub struct ProfilePoint {
     pub fan_speed: Option<i32>, // 0-100
     pub notes: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub target_env_temp: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -183,6 +196,7 @@ pub struct CreateProfilePointRequest {
     pub target_temp: f32,
     pub fan_speed: Option<i32>,
     pub notes: Option<String>,
+    pub target_env_temp: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,6 +211,8 @@ pub struct SessionWithTelemetry {
     pub session: RoastSession,
     pub telemetry: Vec<SessionTelemetry>,
     pub profile: Option<ProfileWithPoints>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cupping: Option<CuppingWithAttributes>,
 }
 
 #[derive(Debug, Serialize)]
@@ -739,4 +755,48 @@ pub struct ModbusTcpConnectionConfig {
 
 fn default_poll_interval() -> u64 {
     1000
+}
+
+// ============================================================================
+// Cupping Notes Models (AP-012)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CuppingScore {
+    pub id: String,
+    pub session_id: String,
+    pub scoring_framework: String,
+    pub overall_score: Option<f32>,
+    pub notes: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CuppingAttribute {
+    pub id: String,
+    pub cupping_id: String,
+    pub attribute_name: String,
+    pub score: f32,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CuppingWithAttributes {
+    #[serde(flatten)]
+    pub cupping: CuppingScore,
+    pub attributes: Vec<CuppingAttribute>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateCuppingAttributeRequest {
+    pub name: String,
+    pub score: f32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateCuppingRequest {
+    pub scoring_framework: Option<String>,
+    pub notes: Option<String>,
+    pub attributes: Vec<CreateCuppingAttributeRequest>,
 }

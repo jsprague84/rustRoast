@@ -24,7 +24,7 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 function makePoint(time_seconds: number, target_temp: number): ProfilePoint {
-	return { id: String(time_seconds), time_seconds, target_temp, fan_speed: null, notes: null };
+	return { id: String(time_seconds), time_seconds, target_temp, fan_speed: null, notes: null, target_env_temp: null };
 }
 
 // --- interpolateTarget tests ---

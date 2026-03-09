@@ -110,10 +110,13 @@ impl RoastSessionService {
             None
         };
 
+        let cupping = self.get_cupping(id).await?;
+
         Ok(Some(SessionWithTelemetry {
             session,
             telemetry,
             profile,
+            cupping,
         }))
     }
 
@@ -241,13 +244,20 @@ impl RoastSessionService {
     pub async fn complete_session(&self, id: &str) -> Result<Option<RoastSession>> {
         let now = Utc::now();
 
-        // Calculate total time and max temperature from telemetry
+        // Fetch the session first to get green_weight / roasted_weight
+        let existing = match self.get_session(id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+
+        // Calculate total time, max temperature, and max RoR from telemetry
         let stats = sqlx::query(
             r#"
-            SELECT 
+            SELECT
                 MAX(elapsed_seconds) as total_seconds,
-                MAX(bean_temp) as max_temp
-            FROM session_telemetry 
+                MAX(bean_temp) as max_temp,
+                MAX(rate_of_rise) as max_ror
+            FROM session_telemetry
             WHERE session_id = ?
             "#,
         )
@@ -255,18 +265,88 @@ impl RoastSessionService {
         .fetch_optional(&self.db)
         .await?;
 
-        let (total_time_seconds, max_temp) = if let Some(row) = stats {
+        let (total_time_seconds, max_temp, max_ror) = if let Some(row) = &stats {
             let total_seconds: Option<f32> = row.try_get("total_seconds").ok();
             let max_temp: Option<f32> = row.try_get("max_temp").ok();
-            (total_seconds.map(|s| s as i32), max_temp)
+            let max_ror: Option<f32> = row.try_get("max_ror").ok();
+            (total_seconds.map(|s| s as i32), max_temp, max_ror)
         } else {
-            (None, None)
+            (None, None, None)
         };
+
+        // Fetch roast events for phase boundaries
+        let events = self.get_roast_events(id).await?;
+
+        let drying_end_event = events
+            .iter()
+            .find(|e| e.event_type == RoastEventType::DryingEnd);
+        let first_crack_event = events
+            .iter()
+            .find(|e| e.event_type == RoastEventType::FirstCrackStart);
+        let drop_event = events.iter().find(|e| e.event_type == RoastEventType::Drop);
+
+        // Compute development_time_ratio: DTR = (total_time - fc_start) / total_time
+        let development_time_ratio = match (total_time_seconds, first_crack_event) {
+            (Some(total), Some(fc)) if total > 0 => {
+                Some((total as f32 - fc.elapsed_seconds) / total as f32)
+            }
+            _ => None,
+        };
+
+        // Compute first_crack_time from event
+        let first_crack_time = first_crack_event.map(|fc| fc.elapsed_seconds as i32);
+
+        // Compute weight_loss_pct
+        let weight_loss_pct = match (existing.green_weight, existing.roasted_weight) {
+            (Some(green), Some(roasted)) if green > 0.0 => Some((green - roasted) / green * 100.0),
+            _ => None,
+        };
+
+        // Drying end time and temp from events
+        let drying_end_time = drying_end_event.map(|e| e.elapsed_seconds as i32);
+        let drying_end_temp = drying_end_event.and_then(|e| e.temperature);
+
+        // Phase boundaries (elapsed_seconds):
+        //   Drying:      0 → drying_end
+        //   Maillard:    drying_end → first_crack_start
+        //   Development: first_crack_start → drop (or total_time)
+        let end_seconds = drop_event
+            .map(|e| e.elapsed_seconds)
+            .or(total_time_seconds.map(|t| t as f32));
+
+        let avg_ror_drying = if let Some(de) = drying_end_event {
+            self.avg_ror_in_range(id, 0.0, de.elapsed_seconds).await?
+        } else {
+            None
+        };
+
+        let avg_ror_maillard = match (drying_end_event, first_crack_event) {
+            (Some(de), Some(fc)) => {
+                self.avg_ror_in_range(id, de.elapsed_seconds, fc.elapsed_seconds)
+                    .await?
+            }
+            _ => None,
+        };
+
+        let avg_ror_development = match (first_crack_event, end_seconds) {
+            (Some(fc), Some(end)) => self.avg_ror_in_range(id, fc.elapsed_seconds, end).await?,
+            _ => None,
+        };
+
+        // Compute AUC (Area Under the Curve) using trapezoidal rule
+        let auc_value = self.compute_auc(id, &events).await?;
 
         let session = sqlx::query_as::<_, RoastSession>(
             r#"
-            UPDATE roast_sessions 
-            SET status = ?, end_time = ?, updated_at = ?, total_time_seconds = ?, max_temp = ?
+            UPDATE roast_sessions
+            SET status = ?, end_time = ?, updated_at = ?,
+                total_time_seconds = ?, max_temp = ?, max_ror = ?,
+                first_crack_time = COALESCE(?, first_crack_time),
+                development_time_ratio = COALESCE(?, development_time_ratio),
+                weight_loss_pct = ?,
+                avg_ror_drying = ?, avg_ror_maillard = ?, avg_ror_development = ?,
+                drying_end_time = ?, drying_end_temp = ?,
+                auc_value = ?
             WHERE id = ? AND status IN (?, ?)
             RETURNING *
             "#,
@@ -276,6 +356,16 @@ impl RoastSessionService {
         .bind(now)
         .bind(total_time_seconds)
         .bind(max_temp)
+        .bind(max_ror)
+        .bind(first_crack_time)
+        .bind(development_time_ratio)
+        .bind(weight_loss_pct)
+        .bind(avg_ror_drying)
+        .bind(avg_ror_maillard)
+        .bind(avg_ror_development)
+        .bind(drying_end_time)
+        .bind(drying_end_temp)
+        .bind(auc_value)
         .bind(id)
         .bind(SessionStatus::Active.to_string())
         .bind(SessionStatus::Paused.to_string())
@@ -283,6 +373,101 @@ impl RoastSessionService {
         .await?;
 
         Ok(session)
+    }
+
+    /// Compute average rate_of_rise within a time range from session telemetry.
+    async fn avg_ror_in_range(
+        &self,
+        session_id: &str,
+        start: f32,
+        end: f32,
+    ) -> Result<Option<f32>> {
+        let row = sqlx::query(
+            r#"
+            SELECT AVG(rate_of_rise) as avg_ror
+            FROM session_telemetry
+            WHERE session_id = ? AND elapsed_seconds >= ? AND elapsed_seconds < ?
+              AND rate_of_rise IS NOT NULL
+            "#,
+        )
+        .bind(session_id)
+        .bind(start)
+        .bind(end)
+        .fetch_optional(&self.db)
+        .await?;
+
+        Ok(row.and_then(|r| r.try_get("avg_ror").ok()))
+    }
+
+    /// Compute AUC (Area Under the Curve) using the trapezoidal rule on bean_temp.
+    /// Result is in °C·min units. Base temp and start event are read from settings.
+    async fn compute_auc(&self, session_id: &str, events: &[RoastEvent]) -> Result<Option<f32>> {
+        // Read settings
+        let base_temp: f32 = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM settings WHERE key = 'auc_base_temp'",
+        )
+        .fetch_optional(&self.db)
+        .await?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0);
+
+        let start_event: String = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM settings WHERE key = 'auc_start_event'",
+        )
+        .fetch_optional(&self.db)
+        .await?
+        .unwrap_or_else(|| "charge".to_string());
+
+        // Determine start elapsed_seconds based on the configured event
+        let start_seconds = match start_event.as_str() {
+            "drying_end" => events
+                .iter()
+                .find(|e| e.event_type == RoastEventType::DryingEnd)
+                .map(|e| e.elapsed_seconds)
+                .unwrap_or(0.0),
+            "first_crack_start" => events
+                .iter()
+                .find(|e| e.event_type == RoastEventType::FirstCrackStart)
+                .map(|e| e.elapsed_seconds)
+                .unwrap_or(0.0),
+            _ => 0.0, // "charge" or default
+        };
+
+        // Fetch telemetry ordered by time, starting from the configured event
+        let rows = sqlx::query(
+            r#"
+            SELECT elapsed_seconds, bean_temp
+            FROM session_telemetry
+            WHERE session_id = ? AND elapsed_seconds >= ? AND bean_temp IS NOT NULL
+            ORDER BY elapsed_seconds
+            "#,
+        )
+        .bind(session_id)
+        .bind(start_seconds)
+        .fetch_all(&self.db)
+        .await?;
+
+        if rows.len() < 2 {
+            return Ok(None);
+        }
+
+        // Trapezoidal rule: sum of (dt * (BT[i] + BT[i+1]) / 2) with base temp subtracted
+        let mut auc_seconds: f64 = 0.0;
+        for pair in rows.windows(2) {
+            let t0: f32 = pair[0].try_get("elapsed_seconds")?;
+            let t1: f32 = pair[1].try_get("elapsed_seconds")?;
+            let bt0: f32 = pair[0].try_get("bean_temp")?;
+            let bt1: f32 = pair[1].try_get("bean_temp")?;
+
+            let v0 = (bt0 - base_temp).max(0.0) as f64;
+            let v1 = (bt1 - base_temp).max(0.0) as f64;
+            let dt = (t1 - t0) as f64;
+
+            auc_seconds += dt * (v0 + v1) / 2.0;
+        }
+
+        // Convert from °C·s to °C·min
+        Ok(Some((auc_seconds / 60.0) as f32))
     }
 
     pub async fn delete_session(&self, id: &str) -> Result<bool> {
@@ -381,8 +566,8 @@ impl RoastSessionService {
             let point = sqlx::query_as::<_, ProfilePoint>(
                 r#"
                 INSERT INTO profile_points (
-                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at, target_env_temp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING *
                 "#,
             )
@@ -393,6 +578,7 @@ impl RoastSessionService {
             .bind(point_req.fan_speed)
             .bind(&point_req.notes)
             .bind(now)
+            .bind(point_req.target_env_temp)
             .fetch_one(&self.db)
             .await?;
 
@@ -491,8 +677,8 @@ impl RoastSessionService {
             sqlx::query(
                 r#"
                 INSERT INTO profile_points (
-                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, profile_id, time_seconds, target_temp, fan_speed, notes, created_at, target_env_temp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 "#,
             )
             .bind(&point_id)
@@ -502,6 +688,7 @@ impl RoastSessionService {
             .bind(point_req.fan_speed)
             .bind(&point_req.notes)
             .bind(now)
+            .bind(point_req.target_env_temp)
             .execute(&mut *tx)
             .await?;
         }
@@ -539,6 +726,7 @@ impl RoastSessionService {
                 } else {
                     None
                 },
+                target_env_temp: None,
             });
         }
 
@@ -690,6 +878,269 @@ impl RoastSessionService {
         }
 
         Ok(())
+    }
+
+    // ---- Cupping Notes CRUD (AP-012) ----
+
+    pub async fn create_cupping(
+        &self,
+        session_id: &str,
+        req: CreateCuppingRequest,
+    ) -> Result<CuppingWithAttributes> {
+        // Delete any existing cupping for this session (upsert semantics)
+        // CASCADE will also delete associated cupping_attributes
+        sqlx::query("DELETE FROM cupping_scores WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.db)
+            .await?;
+
+        let cupping_id = Uuid::new_v4().to_string();
+        let framework = req.scoring_framework.unwrap_or_else(|| "sca".to_string());
+
+        // Compute overall score as average of attribute scores
+        let overall: Option<f32> = if req.attributes.is_empty() {
+            None
+        } else {
+            let sum: f32 = req.attributes.iter().map(|a| a.score).sum();
+            Some(sum / req.attributes.len() as f32)
+        };
+
+        let cupping = sqlx::query_as::<_, CuppingScore>(
+            r#"INSERT INTO cupping_scores (id, session_id, scoring_framework, overall_score, notes)
+               VALUES (?, ?, ?, ?, ?)
+               RETURNING *"#,
+        )
+        .bind(&cupping_id)
+        .bind(session_id)
+        .bind(&framework)
+        .bind(overall)
+        .bind(&req.notes)
+        .fetch_one(&self.db)
+        .await?;
+
+        let mut attributes = Vec::new();
+        for attr in &req.attributes {
+            let attr_id = Uuid::new_v4().to_string();
+            let row = sqlx::query_as::<_, CuppingAttribute>(
+                r#"INSERT INTO cupping_attributes (id, cupping_id, attribute_name, score)
+                   VALUES (?, ?, ?, ?)
+                   RETURNING *"#,
+            )
+            .bind(&attr_id)
+            .bind(&cupping_id)
+            .bind(&attr.name)
+            .bind(attr.score)
+            .fetch_one(&self.db)
+            .await?;
+            attributes.push(row);
+        }
+
+        Ok(CuppingWithAttributes {
+            cupping,
+            attributes,
+        })
+    }
+
+    pub async fn get_cupping(&self, session_id: &str) -> Result<Option<CuppingWithAttributes>> {
+        let cupping = sqlx::query_as::<_, CuppingScore>(
+            "SELECT * FROM cupping_scores WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(session_id)
+        .fetch_optional(&self.db)
+        .await?;
+
+        let cupping = match cupping {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        let attributes = sqlx::query_as::<_, CuppingAttribute>(
+            "SELECT * FROM cupping_attributes WHERE cupping_id = ? ORDER BY attribute_name",
+        )
+        .bind(&cupping.id)
+        .fetch_all(&self.db)
+        .await?;
+
+        Ok(Some(CuppingWithAttributes {
+            cupping,
+            attributes,
+        }))
+    }
+
+    pub async fn delete_cupping(&self, session_id: &str) -> Result<()> {
+        // CASCADE will delete cupping_attributes
+        sqlx::query("DELETE FROM cupping_scores WHERE session_id = ?")
+            .bind(session_id)
+            .execute(&self.db)
+            .await?;
+        Ok(())
+    }
+
+    // ---- Data Export (AP-014) ----
+
+    pub async fn export_csv(&self, id: &str) -> Result<Option<(String, String)>> {
+        let session = match self.get_session(id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let telemetry = self.get_session_telemetry(id).await?;
+        let profile_name = if let Some(pid) = &session.profile_id {
+            self.get_profile_with_points(pid)
+                .await?
+                .map(|p| p.profile.name)
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        let mut csv = String::new();
+        csv.push_str(&format!("# Session: {}\n", session.name));
+        if let Some(ref st) = session.start_time {
+            csv.push_str(&format!("# Date: {}\n", st));
+        }
+        if let Some(ref origin) = session.bean_origin {
+            let variety = session.bean_variety.as_deref().unwrap_or("");
+            if variety.is_empty() {
+                csv.push_str(&format!("# Bean: {}\n", origin));
+            } else {
+                csv.push_str(&format!("# Bean: {} ({})\n", origin, variety));
+            }
+        }
+        if !profile_name.is_empty() {
+            csv.push_str(&format!("# Profile: {}\n", profile_name));
+        }
+        if let Some(gw) = session.green_weight {
+            csv.push_str(&format!("# Green Weight: {}g\n", gw));
+        }
+        if let Some(rw) = session.roasted_weight {
+            csv.push_str(&format!("# Roasted Weight: {}g\n", rw));
+        }
+
+        csv.push_str(
+            "elapsed_seconds,bean_temp,env_temp,rate_of_rise,heater_pwm,fan_pwm,setpoint\n",
+        );
+        for t in &telemetry {
+            csv.push_str(&format!(
+                "{},{},{},{},{},{},{}\n",
+                t.elapsed_seconds,
+                t.bean_temp.map(|v| v.to_string()).unwrap_or_default(),
+                t.env_temp.map(|v| v.to_string()).unwrap_or_default(),
+                t.rate_of_rise.map(|v| v.to_string()).unwrap_or_default(),
+                t.heater_pwm.map(|v| v.to_string()).unwrap_or_default(),
+                t.fan_pwm.map(|v| v.to_string()).unwrap_or_default(),
+                t.setpoint.map(|v| v.to_string()).unwrap_or_default(),
+            ));
+        }
+
+        let date_str = session
+            .start_time
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| session.created_at.format("%Y-%m-%d").to_string());
+        let filename = format!("{}_{}.csv", session.name.replace(' ', "_"), date_str);
+
+        Ok(Some((csv, filename)))
+    }
+
+    pub async fn export_artisan_json(
+        &self,
+        id: &str,
+    ) -> Result<Option<(serde_json::Value, String)>> {
+        let session = match self.get_session(id).await? {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let telemetry = self.get_session_telemetry(id).await?;
+        let events = self.get_roast_events(id).await?;
+
+        let timex: Vec<f64> = telemetry.iter().map(|t| t.elapsed_seconds as f64).collect();
+        let temp1: Vec<f64> = telemetry
+            .iter()
+            .map(|t| t.env_temp.unwrap_or(-1.0) as f64)
+            .collect();
+        let temp2: Vec<f64> = telemetry
+            .iter()
+            .map(|t| t.bean_temp.unwrap_or(-1.0) as f64)
+            .collect();
+
+        // Build timeindex: [CHARGE, DRY, FCs, FCe, SCs, SCe, DROP, COOL]
+        // CHARGE is handled separately (always index 0), so event_map starts at DRY
+        let event_map = [
+            "drying_end",         // DRY
+            "first_crack_start",  // FCs
+            "first_crack_end",    // FCe
+            "second_crack_start", // SCs
+            "second_crack_end",   // SCe
+            "drop_out",           // DROP
+        ];
+
+        // CHARGE is index 0 in telemetry (first reading)
+        let charge_idx: i64 = if !timex.is_empty() { 0 } else { -1 };
+
+        let mut timeindex: Vec<i64> = vec![charge_idx];
+        for event_type in &event_map {
+            let idx = events
+                .iter()
+                .find(|e| e.event_type.to_string() == *event_type)
+                .and_then(|e| {
+                    // Find nearest telemetry index
+                    timex
+                        .iter()
+                        .enumerate()
+                        .min_by_key(|(_, &t)| {
+                            ((t - e.elapsed_seconds as f64) * 1000.0).abs() as i64
+                        })
+                        .map(|(i, _)| i as i64)
+                })
+                .unwrap_or(-1);
+            timeindex.push(idx);
+        }
+        // COOL (index 7) — not tracked, use -1
+        timeindex.push(-1);
+
+        // Build specialevents
+        let specialevents: Vec<serde_json::Value> = events
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "type": e.event_type.to_string(),
+                    "time": e.elapsed_seconds,
+                    "temperature": e.temperature,
+                    "notes": e.notes,
+                })
+            })
+            .collect();
+
+        let roastdate = session
+            .start_time
+            .map(|dt| dt.to_rfc3339())
+            .unwrap_or_else(|| session.created_at.to_rfc3339());
+
+        let weight: Vec<serde_json::Value> = vec![
+            serde_json::json!(session.green_weight.unwrap_or(0.0)),
+            serde_json::json!(session.roasted_weight.unwrap_or(0.0)),
+            serde_json::json!("g"),
+        ];
+
+        let alog = serde_json::json!({
+            "version": "2",
+            "title": session.name,
+            "roastdate": roastdate,
+            "beans": session.bean_origin.unwrap_or_default(),
+            "weight": weight,
+            "timex": timex,
+            "temp1": temp1,
+            "temp2": temp2,
+            "timeindex": timeindex,
+            "specialevents": specialevents,
+        });
+
+        let date_str = session
+            .start_time
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| session.created_at.format("%Y-%m-%d").to_string());
+        let filename = format!("{}_{}.alog", session.name.replace(' ', "_"), date_str);
+
+        Ok(Some((alog, filename)))
     }
 }
 
@@ -1324,7 +1775,12 @@ mod tests {
         // Run migrations
         let migrations: &[&str] = &[
             include_str!("../migrations/001_roast_sessions.sql"),
+            include_str!("../migrations/002_roast_events.sql"),
             include_str!("../migrations/003_device_configuration.sql"),
+            include_str!("../migrations/004_session_statistics.sql"),
+            include_str!("../migrations/005_auc_value.sql"),
+            include_str!("../migrations/006_cupping_scores.sql"),
+            include_str!("../migrations/007_profile_env_temp.sql"),
         ];
         for migration_sql in migrations {
             for statement in migration_sql.split(';') {
@@ -1333,6 +1789,38 @@ mod tests {
                     let _ = sqlx::query(statement).execute(&pool).await;
                 }
             }
+        }
+
+        // Create settings table and seed defaults (mirrors init_db)
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );",
+        )
+        .execute(&pool)
+        .await
+        .expect("Failed to create settings table");
+        for (key, value) in [
+            ("profile_lookahead_seconds", "20"),
+            ("auc_base_temp", "0"),
+            ("auc_start_event", "charge"),
+            ("ror_window_seconds", "30"),
+            ("ror_smoothing_algorithm", "moving_average"),
+            ("auto_dry_temp", "150"),
+            ("auto_event_detection", "true"),
+            ("alarm_sound_enabled", "true"),
+            (
+                "roast_alarms",
+                r#"[{"name":"High Temp Warning","condition_type":"temp_above","threshold":230,"enabled":true},{"name":"FC Approaching","condition_type":"temp_above","threshold":195,"enabled":true},{"name":"Low RoR Warning","condition_type":"ror_below","threshold":5.0,"reference_event":"first_crack_start","enabled":true}]"#,
+            ),
+        ] {
+            let _ = sqlx::query("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)")
+                .bind(key)
+                .bind(value)
+                .execute(&pool)
+                .await;
         }
 
         pool
@@ -1961,12 +2449,14 @@ mod tests {
                         target_temp: 180.0,
                         fan_speed: Some(80),
                         notes: None,
+                        target_env_temp: None,
                     },
                     CreateProfilePointRequest {
                         time_seconds: 300,
                         target_temp: 200.0,
                         fan_speed: None,
                         notes: None,
+                        target_env_temp: None,
                     },
                 ],
             })
@@ -1994,18 +2484,21 @@ mod tests {
                             target_temp: 185.0,
                             fan_speed: Some(90),
                             notes: None,
+                            target_env_temp: None,
                         },
                         CreateProfilePointRequest {
                             time_seconds: 200,
                             target_temp: 195.0,
                             fan_speed: None,
                             notes: None,
+                            target_env_temp: None,
                         },
                         CreateProfilePointRequest {
                             time_seconds: 500,
                             target_temp: 220.0,
                             fan_speed: Some(60),
                             notes: Some("Finish".to_string()),
+                            target_env_temp: None,
                         },
                     ],
                 },
@@ -2053,5 +2546,398 @@ mod tests {
             .unwrap();
 
         assert!(missing.is_none());
+    }
+
+    // ---- Session Completion Statistics Tests ----
+
+    #[tokio::test]
+    async fn test_complete_session_computes_dtr_and_weight_loss() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create a session with green and roasted weights
+        let session = service
+            .create_session(CreateSessionRequest {
+                name: "Stats Test Roast".to_string(),
+                device_id: "esp32-001".to_string(),
+                profile_id: None,
+                bean_origin: Some("Ethiopia".to_string()),
+                bean_variety: Some("Yirgacheffe".to_string()),
+                green_weight: Some(200.0),
+                target_roast_level: Some("medium".to_string()),
+                notes: None,
+                ambient_temp: None,
+                humidity: None,
+            })
+            .await
+            .unwrap();
+
+        // Start the session
+        let session = service.start_session(&session.id).await.unwrap().unwrap();
+        assert_eq!(session.status, SessionStatus::Active);
+
+        // Set roasted weight via update
+        service
+            .update_session(
+                &session.id,
+                UpdateSessionRequest {
+                    name: None,
+                    roasted_weight: Some(170.0),
+                    notes: None,
+                    first_crack_time: None,
+                    development_time_ratio: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Add telemetry points spanning 600 seconds with varying RoR
+        for i in 0..=600 {
+            if i % 10 == 0 {
+                let elapsed = i as f32;
+                let bean_temp = 100.0 + (elapsed / 600.0) * 120.0; // 100→220°C
+                let ror = if elapsed < 200.0 {
+                    15.0 // drying phase
+                } else if elapsed < 400.0 {
+                    12.0 // maillard phase
+                } else {
+                    8.0 // development phase
+                };
+                service
+                    .add_telemetry_point(
+                        &session.id,
+                        elapsed,
+                        Some(bean_temp),
+                        Some(bean_temp + 20.0),
+                        Some(ror),
+                        Some(80),
+                        Some(200),
+                        Some(bean_temp),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+
+        // Add roast events for phase boundaries
+        service
+            .create_roast_event(
+                &session.id,
+                CreateRoastEventRequest {
+                    event_type: RoastEventType::DryingEnd,
+                    elapsed_seconds: 200.0,
+                    temperature: Some(140.0),
+                    notes: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        service
+            .create_roast_event(
+                &session.id,
+                CreateRoastEventRequest {
+                    event_type: RoastEventType::FirstCrackStart,
+                    elapsed_seconds: 400.0,
+                    temperature: Some(200.0),
+                    notes: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Complete the session
+        let completed = service
+            .complete_session(&session.id)
+            .await
+            .unwrap()
+            .expect("session should be returned");
+
+        assert_eq!(completed.status, SessionStatus::Completed);
+
+        // DTR: (600 - 400) / 600 = 200/600 ≈ 0.333
+        let dtr = completed.development_time_ratio.unwrap();
+        assert!(
+            (dtr - 0.333).abs() < 0.01,
+            "DTR should be ~0.333, got {dtr}"
+        );
+
+        // Weight loss: (200 - 170) / 200 * 100 = 15%
+        let wl = completed.weight_loss_pct.unwrap();
+        assert!(
+            (wl - 15.0).abs() < 0.1,
+            "Weight loss should be 15%, got {wl}"
+        );
+
+        // Max RoR should be 15.0
+        let max_ror = completed.max_ror.unwrap();
+        assert!(
+            (max_ror - 15.0).abs() < 0.1,
+            "Max RoR should be 15.0, got {max_ror}"
+        );
+
+        // First crack time should be 400 seconds
+        assert_eq!(completed.first_crack_time, Some(400));
+
+        // Drying end fields
+        assert_eq!(completed.drying_end_time, Some(200));
+        assert_eq!(completed.drying_end_temp, Some(140.0));
+
+        // Phase avg RoR values
+        let avg_dry = completed.avg_ror_drying.unwrap();
+        assert!(
+            (avg_dry - 15.0).abs() < 0.1,
+            "Avg RoR drying should be ~15.0, got {avg_dry}"
+        );
+
+        let avg_mail = completed.avg_ror_maillard.unwrap();
+        assert!(
+            (avg_mail - 12.0).abs() < 0.1,
+            "Avg RoR maillard should be ~12.0, got {avg_mail}"
+        );
+
+        let avg_dev = completed.avg_ror_development.unwrap();
+        assert!(
+            (avg_dev - 8.0).abs() < 0.1,
+            "Avg RoR development should be ~8.0, got {avg_dev}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_complete_session_computes_auc() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create and start a session
+        let session = service
+            .create_session(CreateSessionRequest {
+                name: "AUC Test Roast".to_string(),
+                device_id: "esp32-001".to_string(),
+                profile_id: None,
+                bean_origin: None,
+                bean_variety: None,
+                green_weight: None,
+                target_roast_level: None,
+                notes: None,
+                ambient_temp: None,
+                humidity: None,
+            })
+            .await
+            .unwrap();
+        service.start_session(&session.id).await.unwrap();
+
+        // 3-point linear curve: (0s, 100°C), (60s, 100°C), (120s, 200°C)
+        // With base_temp=0 (default):
+        //   Segment 1: dt=60, avg_temp=(100+100)/2=100 → area = 60*100 = 6000 °C·s
+        //   Segment 2: dt=60, avg_temp=(100+200)/2=150 → area = 60*150 = 9000 °C·s
+        //   Total = 15000 °C·s = 250 °C·min
+        service
+            .add_telemetry_point(&session.id, 0.0, Some(100.0), None, None, None, None, None)
+            .await
+            .unwrap();
+        service
+            .add_telemetry_point(&session.id, 60.0, Some(100.0), None, None, None, None, None)
+            .await
+            .unwrap();
+        service
+            .add_telemetry_point(
+                &session.id,
+                120.0,
+                Some(200.0),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        let completed = service
+            .complete_session(&session.id)
+            .await
+            .unwrap()
+            .expect("session should be returned");
+
+        let auc = completed.auc_value.unwrap();
+        assert!(
+            (auc - 250.0).abs() < 0.1,
+            "AUC should be 250.0 °C·min, got {auc}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cupping_crud() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create a session
+        let session = service
+            .create_session(CreateSessionRequest {
+                name: "Cupping Test".to_string(),
+                device_id: "esp32-001".to_string(),
+                profile_id: None,
+                bean_origin: Some("Ethiopia".to_string()),
+                bean_variety: None,
+                green_weight: None,
+                target_roast_level: None,
+                notes: None,
+                ambient_temp: None,
+                humidity: None,
+            })
+            .await
+            .unwrap();
+
+        // No cupping initially
+        let cupping = service.get_cupping(&session.id).await.unwrap();
+        assert!(cupping.is_none());
+
+        // Create cupping with attributes
+        let result = service
+            .create_cupping(
+                &session.id,
+                CreateCuppingRequest {
+                    scoring_framework: Some("sca".to_string()),
+                    notes: Some("Floral, bright".to_string()),
+                    attributes: vec![
+                        CreateCuppingAttributeRequest {
+                            name: "aroma".to_string(),
+                            score: 8.0,
+                        },
+                        CreateCuppingAttributeRequest {
+                            name: "acidity".to_string(),
+                            score: 7.5,
+                        },
+                        CreateCuppingAttributeRequest {
+                            name: "body".to_string(),
+                            score: 7.0,
+                        },
+                    ],
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.cupping.session_id, session.id);
+        assert_eq!(result.cupping.scoring_framework, "sca");
+        assert_eq!(result.cupping.notes, Some("Floral, bright".to_string()));
+        // overall_score = (8.0 + 7.5 + 7.0) / 3 = 7.5
+        let overall = result.cupping.overall_score.unwrap();
+        assert!((overall - 7.5).abs() < 0.01);
+        assert_eq!(result.attributes.len(), 3);
+
+        // Fetch cupping
+        let fetched = service.get_cupping(&session.id).await.unwrap().unwrap();
+        assert_eq!(fetched.cupping.id, result.cupping.id);
+        assert_eq!(fetched.attributes.len(), 3);
+
+        // Cupping included in session with telemetry
+        let swt = service
+            .get_session_with_telemetry(&session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(swt.cupping.is_some());
+        assert_eq!(swt.cupping.unwrap().attributes.len(), 3);
+
+        // Delete cupping
+        service.delete_cupping(&session.id).await.unwrap();
+        let gone = service.get_cupping(&session.id).await.unwrap();
+        assert!(gone.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_export_csv_and_artisan() {
+        let pool = setup_test_db().await;
+        let service = RoastSessionService::new(pool);
+
+        // Create a session with metadata
+        let session = service
+            .create_session(CreateSessionRequest {
+                name: "Export Test".to_string(),
+                device_id: "esp32-001".to_string(),
+                profile_id: None,
+                bean_origin: Some("Colombia".to_string()),
+                bean_variety: Some("Caturra".to_string()),
+                green_weight: Some(200.0),
+                target_roast_level: None,
+                notes: None,
+                ambient_temp: None,
+                humidity: None,
+            })
+            .await
+            .unwrap();
+
+        // Start session
+        service.start_session(&session.id).await.unwrap();
+
+        // Add telemetry
+        for i in 0..5 {
+            let elapsed = i as f32 * 60.0;
+            let bt = 100.0 + i as f32 * 20.0;
+            let et = bt + 30.0;
+            service
+                .add_telemetry_point(
+                    &session.id,
+                    elapsed,
+                    Some(bt),
+                    Some(et),
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+        }
+
+        // Add an event
+        service
+            .create_roast_event(
+                &session.id,
+                CreateRoastEventRequest {
+                    event_type: RoastEventType::FirstCrackStart,
+                    elapsed_seconds: 180.0,
+                    temperature: Some(180.0),
+                    notes: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Test CSV export
+        let (csv, csv_filename) = service.export_csv(&session.id).await.unwrap().unwrap();
+        assert!(csv_filename.starts_with("Export_Test_"));
+        assert!(csv_filename.ends_with(".csv"));
+        assert!(csv.contains("# Session: Export Test"));
+        assert!(csv.contains("# Bean: Colombia (Caturra)"));
+        assert!(csv.contains("elapsed_seconds,bean_temp,env_temp"));
+        // Check we have data rows (header + 5 telemetry points)
+        let data_lines: Vec<&str> = csv.lines().filter(|l| !l.starts_with('#')).collect();
+        assert_eq!(data_lines.len(), 6); // 1 header + 5 data rows
+
+        // Test Artisan JSON export
+        let (alog, alog_filename) = service
+            .export_artisan_json(&session.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(alog_filename.starts_with("Export_Test_"));
+        assert!(alog_filename.ends_with(".alog"));
+        assert_eq!(alog["title"], "Export Test");
+        assert_eq!(alog["beans"], "Colombia");
+        let timex = alog["timex"].as_array().unwrap();
+        assert_eq!(timex.len(), 5);
+        let temp2 = alog["temp2"].as_array().unwrap();
+        assert_eq!(temp2.len(), 5);
+        // First BT should be 100.0
+        assert!((temp2[0].as_f64().unwrap() - 100.0).abs() < 0.1);
+        // timeindex should have FCs mapped
+        let timeindex = alog["timeindex"].as_array().unwrap();
+        assert_eq!(timeindex.len(), 8);
+        // CHARGE at index 0
+        assert_eq!(timeindex[0], 0);
+        // FCs should be at index 3 in telemetry (180s is closest to 180.0)
+        assert_eq!(timeindex[2], 3);
     }
 }
