@@ -20,8 +20,8 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Extended AutoTuneStartPayload with 6 optional fields, added validation, serialized full body for MQTT. cargo build/test/clippy all pass."
     },
     {
       "id": "US-002",
@@ -36,8 +36,8 @@
         "Typecheck passes"
       ],
       "priority": 2,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Extended AutotuneStatus with mode/totalSteps, extended AutotuneResults with all quality metrics, added AutotuneStartParams interface, documented AutotuneWsMessage data fields. npm run check passes."
     },
     {
       "id": "US-003",
@@ -54,8 +54,8 @@
         "Typecheck passes"
       ],
       "priority": 3,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Updated autotune.start() to accept AutotuneStartParams, builds snake_case body for backend. Changed AutotuneResultsResponse.results to Record<string,unknown>. Added getStatusHistory/getResultsHistory methods. Updated store caller. npm run check passes."
     },
     {
       "id": "US-004",
@@ -74,8 +74,8 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Updated handleAutotuneEvent for step response phases (STEP_BASELINE/UP/SETTLE/ANALYZE), mode parsing, total_steps progress, FAILED phase. Extended results parsing with all quality metrics. Updated startAutotune to accept AutotuneStartParams. Updated fetchLatestAutotune with same logic. npm run check passes."
     },
     {
       "id": "US-005",
@@ -95,8 +95,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 5,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added mode radio buttons (relay/step_response), tuning method dropdown for relay, aggressiveness input for step response, collapsible advanced params (bias/amplitude/hysteresis), step count from totalSteps, step response phase colors/labels. npm run check passes with 0 errors 0 warnings."
     },
     {
       "id": "US-006",
@@ -116,8 +116,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 6,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added quality badge (Good/Acceptable/Poor/Fallback), tuning method label, duration display, original PID values in comparison table, collapsible Tuning Details for relay and Process Model (FOPDT) for step response, FAILED phase error display. npm run check passes."
     },
     {
       "id": "US-007",
@@ -136,8 +136,8 @@
         "Verify in browser using dev-browser skill"
       ],
       "priority": 7,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added step response phase labels/colors, FAILED phase, mode indicator (Relay/Step), quality badge in results, totalSteps for step count/progress. Compact layout preserved. npm run check passes."
     },
     {
       "id": "US-008",
@@ -156,8 +156,8 @@
         "Typecheck passes"
       ],
       "priority": 8,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Added 7 new tests: step response phases active, FAILED inactive, mode parsing, total_steps progress, full params passing, extended results with quality metrics, FOPDT model results. Updated existing tests for new default totalSteps=12. All 24 autotune tests pass, 58 total."
     },
     {
       "id": "US-009",
@@ -181,8 +181,8 @@
         "Typecheck passes"
       ],
       "priority": 9,
-      "passes": false,
-      "notes": ""
+      "passes": true,
+      "notes": "Full audit passed: cargo build/test/clippy all clean, npm run check 0 errors 0 warnings, npm test 58/58 pass. AutoTuneStartPayload has 7 fields with correct serde attrs. api_autotune_start forwards full serialized body. All step response phases recognized. Backward compatible. No issues found."
     }
   ]
 }
