@@ -81,3 +81,6 @@ mqtt_credentials.json
 # Backup files
 *.bak
 *.backup
+
+# Ralph autonomous agent tracking
+ralph/
