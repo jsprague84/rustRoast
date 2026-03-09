@@ -1399,8 +1399,13 @@ async fn api_autotune_start(
         }
     }
     if let Some(ref tm) = body.tuning_method {
-        if !["zn_classic", "tyreus_luyben", "zn_some_overshoot", "zn_no_overshoot"]
-            .contains(&tm.as_str())
+        if ![
+            "zn_classic",
+            "tyreus_luyben",
+            "zn_some_overshoot",
+            "zn_no_overshoot",
+        ]
+        .contains(&tm.as_str())
         {
             return (
                 StatusCode::BAD_REQUEST,
@@ -1411,7 +1416,10 @@ async fn api_autotune_start(
     }
     if let Some(b) = body.bias {
         if !(10.0..=90.0).contains(&b) {
-            return (StatusCode::BAD_REQUEST, "bias must be between 10.0 and 90.0")
+            return (
+                StatusCode::BAD_REQUEST,
+                "bias must be between 10.0 and 90.0",
+            )
                 .into_response();
         }
     }
