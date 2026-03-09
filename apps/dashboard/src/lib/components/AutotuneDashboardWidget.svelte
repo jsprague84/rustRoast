@@ -14,20 +14,82 @@
 		fetchLatestAutotune
 	} from '$lib/stores/autotune.svelte.js';
 
+	const phaseLabelMap: Record<string, string> = {
+		HEATING: 'Heating',
+		STABILIZING: 'Stabilizing',
+		RUNNING: 'Running',
+		ANALYZING: 'Analyzing',
+		COMPLETE: 'Complete',
+		ERROR: 'Error',
+		FAILED: 'Failed',
+		STEP_BASELINE: 'Baseline',
+		STEP_UP: 'Step Up',
+		STEP_SETTLE: 'Settling',
+		STEP_ANALYZE: 'Analyzing'
+	};
+
 	const phaseLabel = $derived(
 		autotuneState.status?.phase
-			? autotuneState.status.phase.charAt(0) + autotuneState.status.phase.slice(1).toLowerCase()
+			? (phaseLabelMap[autotuneState.status.phase] ?? autotuneState.status.phase.charAt(0) + autotuneState.status.phase.slice(1).toLowerCase())
 			: ''
 	);
+
+	const phaseColor = $derived.by(() => {
+		const phase = autotuneState.status?.phase;
+		if (!phase) return 'text-amber-400';
+		switch (phase) {
+			case 'HEATING':
+			case 'STABILIZING':
+			case 'STEP_UP':
+				return 'text-amber-400';
+			case 'RUNNING':
+				return 'text-green-400';
+			case 'ANALYZING':
+			case 'STEP_SETTLE':
+			case 'STEP_ANALYZE':
+				return 'text-blue-400';
+			case 'STEP_BASELINE':
+				return 'text-cyan-400';
+			case 'COMPLETE':
+				return 'text-green-400';
+			case 'ERROR':
+			case 'FAILED':
+				return 'text-red-400';
+			default:
+				return 'text-amber-400';
+		}
+	});
+
+	const modeIndicator = $derived(
+		autotuneState.mode === 'step_response' ? 'Step' : 'Relay'
+	);
+
+	const qualityBadge = $derived.by(() => {
+		const q = autotuneState.results?.quality;
+		if (!q) return null;
+		switch (q) {
+			case 'good': return { label: 'Good', cls: 'text-green-400' };
+			case 'acceptable': return { label: 'Acceptable', cls: 'text-amber-400' };
+			case 'poor': return { label: 'Poor', cls: 'text-red-400' };
+			case 'fallback': return { label: 'Fallback', cls: 'text-gray-400' };
+			default: return null;
+		}
+	});
 
 	const progressBarColor = $derived.by(() => {
 		const phase = autotuneState.status?.phase;
 		if (!phase) return 'bg-amber-500';
 		switch (phase) {
 			case 'RUNNING': return 'bg-green-500';
-			case 'ANALYZING': return 'bg-blue-500';
+			case 'ANALYZING':
+			case 'STEP_BASELINE':
+			case 'STEP_SETTLE':
+			case 'STEP_ANALYZE':
+				return 'bg-blue-500';
 			case 'COMPLETE': return 'bg-green-500';
-			case 'ERROR': return 'bg-red-500';
+			case 'ERROR':
+			case 'FAILED':
+				return 'bg-red-500';
 			default: return 'bg-amber-500';
 		}
 	});
@@ -78,7 +140,7 @@
 		if (!$deviceId) return;
 		loading = true;
 		try {
-			await startAutotune($deviceId, targetTemp);
+			await startAutotune($deviceId, { targetTemp });
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			notifications.add(`Failed to start autotune: ${msg}`, 'error');
@@ -130,7 +192,12 @@
 	{:else if autotuneState.results && !autotuneState.isAutotuning}
 		<!-- Results state -->
 		<div class="space-y-2">
-			<p class="text-xs font-medium text-green-400">Autotune Complete</p>
+			<div class="flex items-center gap-2">
+				<p class="text-xs font-medium text-green-400">Recommended PID</p>
+				{#if qualityBadge}
+					<span class="text-xs {qualityBadge.cls}">({qualityBadge.label})</span>
+				{/if}
+			</div>
 			<div class="flex gap-3 text-xs text-muted-foreground">
 				<span>Kp: <span class="text-green-400">{autotuneState.results.Kp?.toFixed(2) ?? '—'}</span></span>
 				<span>Ki: <span class="text-green-400">{autotuneState.results.Ki?.toFixed(4) ?? '—'}</span></span>
@@ -159,10 +226,13 @@
 		<!-- Active state -->
 		<div class="space-y-2">
 			<div class="flex items-center justify-between">
-				<span class="text-xs font-medium text-amber-400">{phaseLabel}</span>
+				<span class="flex items-center gap-1.5">
+					<span class="text-xs font-medium {phaseColor}">{phaseLabel}</span>
+					<span class="text-xs text-muted-foreground">({modeIndicator})</span>
+				</span>
 				{#if autotuneState.status && autotuneState.status.stepCount > 0}
 					<span class="text-xs text-muted-foreground">
-						Step {autotuneState.status.stepCount}/~15
+						Step {autotuneState.status.stepCount}/{autotuneState.status.totalSteps ?? 12}
 					</span>
 				{/if}
 			</div>

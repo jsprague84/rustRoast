@@ -18,6 +18,7 @@ function resetAutotuneState() {
 	autotuneState.results = null;
 	autotuneState.isAutotuning = false;
 	autotuneState.targetTemp = null;
+	autotuneState.mode = 'relay';
 }
 
 describe('autotune store', () => {
@@ -64,8 +65,8 @@ describe('autotune store', () => {
 			expect(autotuneState.status?.phase).toBe('RUNNING');
 			expect(autotuneState.status?.stepCount).toBe(7);
 			expect(autotuneState.isAutotuning).toBe(true);
-			// Progress: round((7/15)*100) = 47
-			expect(autotuneState.status?.progress).toBe(47);
+			// Progress: round((7/12)*100) = 58 (default totalSteps=12)
+			expect(autotuneState.status?.progress).toBe(58);
 		});
 
 		it('transitions to ANALYZING phase at 95% progress', () => {
@@ -106,7 +107,7 @@ describe('autotune store', () => {
 				autotune: { type: 'status', data: { phase: 'RUNNING', current_step: 20 } }
 			});
 
-			// (20/15)*100 = 133, capped at 95
+			// (20/12)*100 = 167, capped at 95
 			expect(autotuneState.status?.progress).toBe(95);
 		});
 
@@ -163,7 +164,9 @@ describe('autotune store', () => {
 				autotune: { type: 'results', data: { recommended_kp: 2.5, recommended_ki: 0.005, recommended_kd: 1.2 } }
 			});
 
-			expect(autotuneState.results).toEqual({ Kp: 2.5, Ki: 0.005, Kd: 1.2 });
+			expect(autotuneState.results?.Kp).toBe(2.5);
+			expect(autotuneState.results?.Ki).toBe(0.005);
+			expect(autotuneState.results?.Kd).toBe(1.2);
 		});
 
 		it('falls back to Kp/Ki/Kd when recommended_ fields are absent', () => {
@@ -171,7 +174,9 @@ describe('autotune store', () => {
 				autotune: { type: 'results', data: { Kp: 3.0, Ki: 0.01, Kd: 2.0 } }
 			});
 
-			expect(autotuneState.results).toEqual({ Kp: 3.0, Ki: 0.01, Kd: 2.0 });
+			expect(autotuneState.results?.Kp).toBe(3.0);
+			expect(autotuneState.results?.Ki).toBe(0.01);
+			expect(autotuneState.results?.Kd).toBe(2.0);
 		});
 
 		it('defaults missing PID values to 0', () => {
@@ -179,7 +184,9 @@ describe('autotune store', () => {
 				autotune: { type: 'results', data: {} }
 			});
 
-			expect(autotuneState.results).toEqual({ Kp: 0, Ki: 0, Kd: 0 });
+			expect(autotuneState.results?.Kp).toBe(0);
+			expect(autotuneState.results?.Ki).toBe(0);
+			expect(autotuneState.results?.Kd).toBe(0);
 		});
 	});
 
@@ -189,7 +196,7 @@ describe('autotune store', () => {
 		it('startAutotune sets initial state and calls API', async () => {
 			mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
-			await startAutotune('device-1', 200);
+			await startAutotune('device-1', { targetTemp: 200 });
 
 			expect(autotuneState.isAutotuning).toBe(true);
 			expect(autotuneState.targetTemp).toBe(200);
@@ -223,6 +230,129 @@ describe('autotune store', () => {
 			expect(autotuneState.results).toBeNull();
 			expect(autotuneState.status).toBeNull();
 			expect(autotuneState.targetTemp).toBeNull();
+		});
+
+		it('startAutotune passes full params', async () => {
+			mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+			await startAutotune('device-1', {
+				targetTemp: 200,
+				mode: 'relay',
+				tuningMethod: 'tyreus_luyben',
+				bias: 55,
+				amplitude: 30,
+				hysteresis: 1.5,
+				aggressiveness: 0.8
+			});
+
+			expect(autotuneState.isAutotuning).toBe(true);
+			expect(autotuneState.targetTemp).toBe(200);
+			expect(autotuneState.mode).toBe('relay');
+
+			// Verify fetch was called with all params in the body
+			const fetchCall = mockFetch.mock.calls[0];
+			const body = JSON.parse(fetchCall[1]?.body as string);
+			expect(body.target_temperature).toBe(200);
+			expect(body.mode).toBe('relay');
+			expect(body.tuning_method).toBe('tyreus_luyben');
+			expect(body.bias).toBe(55);
+			expect(body.amplitude).toBe(30);
+			expect(body.hysteresis).toBe(1.5);
+			expect(body.aggressiveness).toBe(0.8);
+		});
+	});
+
+	// --- Step response phase tests ---
+
+	describe('step response phases', () => {
+		it('parses step response status phases as active', () => {
+			const stepPhases = ['STEP_BASELINE', 'STEP_UP', 'STEP_SETTLE', 'STEP_ANALYZE'];
+			for (const phase of stepPhases) {
+				handleAutotuneEvent({
+					autotune: { type: 'status', data: { phase, current_step: 0 } }
+				});
+				expect(autotuneState.isAutotuning).toBe(true);
+				expect(autotuneState.status?.phase).toBe(phase);
+			}
+		});
+
+		it('parses FAILED phase as inactive', () => {
+			handleAutotuneEvent({
+				autotune: { type: 'status', data: { phase: 'FAILED', current_step: 0, error: 'Timeout' } }
+			});
+			expect(autotuneState.isAutotuning).toBe(false);
+			expect(autotuneState.status?.phase).toBe('FAILED');
+			expect(autotuneState.status?.error).toBe('Timeout');
+		});
+
+		it('parses mode from status messages', () => {
+			handleAutotuneEvent({
+				autotune: { type: 'status', data: { phase: 'RUNNING', current_step: 5, mode: 'step_response' } }
+			});
+			expect(autotuneState.status?.mode).toBe('step_response');
+			expect(autotuneState.mode).toBe('step_response');
+		});
+
+		it('uses total_steps for progress calculation', () => {
+			handleAutotuneEvent({
+				autotune: { type: 'status', data: { phase: 'RUNNING', current_step: 5, total_steps: 10 } }
+			});
+			// Progress: round((5/10)*100) = 50
+			expect(autotuneState.status?.progress).toBe(50);
+			expect(autotuneState.status?.totalSteps).toBe(10);
+		});
+	});
+
+	// --- Extended results parsing ---
+
+	describe('extended results parsing', () => {
+		it('parses extended results with quality metrics', () => {
+			handleAutotuneEvent({
+				autotune: {
+					type: 'results',
+					data: {
+						recommended_kp: 5.0, recommended_ki: 0.1, recommended_kd: 3.0,
+						tuning_method: 'tyreus_luyben',
+						quality: 'good',
+						oscillation_period: 45.2,
+						consistency_pct: 97.5,
+						mode: 'relay'
+					}
+				}
+			});
+
+			expect(autotuneState.results?.Kp).toBe(5.0);
+			expect(autotuneState.results?.tuning_method).toBe('tyreus_luyben');
+			expect(autotuneState.results?.quality).toBe('good');
+			expect(autotuneState.results?.oscillation_period).toBe(45.2);
+			expect(autotuneState.results?.consistency_pct).toBe(97.5);
+			expect(autotuneState.results?.mode).toBe('relay');
+		});
+
+		it('parses step response results with FOPDT model', () => {
+			handleAutotuneEvent({
+				autotune: {
+					type: 'results',
+					data: {
+						recommended_kp: 3.2, recommended_ki: 0.05, recommended_kd: 2.1,
+						mode: 'step_response',
+						process_gain_K: 0.85,
+						time_constant_tau: 120.5,
+						dead_time_theta: 8.3,
+						aggressiveness: 1.0,
+						simc_tau_c: 16.3,
+						quality: 'acceptable'
+					}
+				}
+			});
+
+			expect(autotuneState.results?.process_gain_K).toBe(0.85);
+			expect(autotuneState.results?.time_constant_tau).toBe(120.5);
+			expect(autotuneState.results?.dead_time_theta).toBe(8.3);
+			expect(autotuneState.results?.aggressiveness).toBe(1.0);
+			expect(autotuneState.results?.simc_tau_c).toBe(16.3);
+			expect(autotuneState.results?.quality).toBe('acceptable');
+			expect(autotuneState.results?.mode).toBe('step_response');
 		});
 	});
 });

@@ -1,292 +1,188 @@
 {
-  "project": "rustRoast",
-  "branchName": "ralph/profile-autotune",
-  "description": "Profile following and PID autotune features for the rustRoast coffee roaster dashboard. The backend is ~95% complete for both features — work is primarily frontend SvelteKit components with minor backend additions. Uses SvelteKit 2 with Svelte 5 runes ($state, $derived, $effect), Tailwind CSS 4 with OKLch dark theme tokens, Apache ECharts (tree-shaken via echarts/core), lucide-svelte icons. Existing infrastructure: API client at $lib/api/client.ts, telemetry WebSocket store at $lib/stores/telemetry.ts, Chart.svelte wrapper, TelemetryChart.svelte, CurrentReadings.svelte, SessionControls.svelte, PidControls.svelte. Profile CRUD endpoints exist (GET/POST /api/profiles, GET/DELETE /api/profiles/:id, POST /api/profiles/import/artisan). Autotune endpoints exist (POST /api/roaster/:device_id/autotune/start|stop|apply, GET status/results). WebSocket at /ws/telemetry already forwards autotune events. ESP32 firmware implements full relay feedback Ziegler-Nichols autotune. CRITICAL: All files MUST be .svelte or .ts — no .tsx, no React. Svelte 5 rune stores use .svelte.ts extension. Follow existing patterns from dashboard components.",
+  "project": "rustRoast Auto-Tune UI Integration",
+  "branchName": "feature/autotune-ui-integration",
+  "description": "Full integration of the upgraded ESP32 auto-tune system into the rustRoast backend and SvelteKit dashboard. Extends the backend start payload to forward new configurable parameters (mode, tuning method, relay params, aggressiveness), updates frontend types/store/API client for both relay and step response modes, adds mode/method selectors and advanced parameter inputs to the AutotunePanel UI, displays quality metrics in results, and updates the compact dashboard widget.",
   "userStories": [
     {
-      "id": "PF-001",
-      "title": "Add profile create/update backend support",
-      "description": "As a developer, I need the backend to support creating profiles via the frontend API client and updating existing profiles so the profile designer has complete CRUD operations.",
+      "id": "US-001",
+      "title": "Extend backend AutoTuneStartPayload to forward all configurable parameters",
+      "description": "As a backend developer, I want the /api/roaster/{device_id}/autotune/start endpoint to accept and forward all new auto-tune parameters (mode, tuning_method, bias, amplitude, hysteresis, aggressiveness) to the ESP32 via MQTT, so the dashboard can control the full auto-tune configuration.",
       "acceptanceCriteria": [
-        "profiles.create() method added to frontend API client ($lib/api/client.ts) calling POST /api/profiles with CreateProfileRequest body (name, description, charge_temp, target_end_temp, target_total_time, points[])",
-        "PUT /api/profiles/:id endpoint added to backend main.rs for updating profile metadata and replacing all points",
-        "Update service method in session_service replaces all profile points atomically: DELETE old points + INSERT new in a SQLx transaction",
-        "profiles.update() method added to frontend API client calling PUT /api/profiles/:id",
-        "cargo test passes (add test for profile update round-trip)",
+        "In crates/server/src/main.rs, extend AutoTuneStartPayload struct with optional fields: mode (Option<String>), tuning_method (Option<String>), bias (Option<f64>), amplitude (Option<f64>), hysteresis (Option<f64>), aggressiveness (Option<f64>) — all with #[serde(default)]",
+        "In api_autotune_start(), construct the MQTT JSON payload by serializing the full AutoTuneStartPayload body (using serde_json::to_string(&body)) instead of hardcoding only target_temperature",
+        "Add #[derive(Serialize)] to AutoTuneStartPayload so it can be serialized for MQTT",
+        "Add validation: if mode is provided, must be 'relay' or 'step_response'; if tuning_method provided, must be one of 'zn_classic', 'tyreus_luyben', 'zn_some_overshoot', 'zn_no_overshoot'; if bias provided, must be 10.0..=90.0; if amplitude provided, must be 5.0..=45.0; if hysteresis provided, must be 0.1..=5.0; if aggressiveness provided, must be 0.1..=2.0",
+        "Return 400 Bad Request with descriptive message for any validation failure",
+        "Backward compatible: existing calls with only target_temperature still work (all new fields are Option with serde default)",
+        "Add #[serde(skip_serializing_if = \"Option::is_none\")] to all optional fields so the MQTT JSON only includes fields that were actually provided",
+        "cargo test --workspace passes",
         "cargo clippy --workspace -- -D warnings passes",
-        "npm run check passes with zero errors"
+        "Typecheck passes"
       ],
       "priority": 1,
-      "passes": true,
-      "notes": "The backend already has create_profile, list_profiles, get_profile_with_points, delete_profile, import_artisan_profile in session_service (crates/server/src/services/sessions.rs). Profile routes are in main.rs around line 1361. CreateProfileRequest model exists in models.rs. The DB tables roast_profiles and profile_points exist with FK cascade delete. For the update endpoint, model it after api_create_profile but accept the profile ID from the path and do an UPDATE on metadata + DELETE/INSERT on points within a transaction. The frontend API client is at apps/dashboard/src/lib/api/client.ts — the profiles object is missing create() (backend endpoint exists). Add update() once the backend endpoint is ready."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "PF-002",
-      "title": "Add global settings table and API",
-      "description": "As a developer, I need a key-value settings table in the database so user preferences like lookahead time persist across sessions.",
+      "id": "US-002",
+      "title": "Update frontend TypeScript types for auto-tune modes and quality metrics",
+      "description": "As a frontend developer, I want structured TypeScript interfaces for the new auto-tune parameters, status phases, and result quality metrics so the store and UI components have type-safe access to all fields.",
       "acceptanceCriteria": [
-        "settings table created in the init_db function in main.rs: CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')))",
-        "Default setting seeded: INSERT OR IGNORE INTO settings (key, value) VALUES ('profile_lookahead_seconds', '20')",
-        "GET /api/settings endpoint returns all settings as a JSON object { key: value, ... }",
-        "PUT /api/settings/:key endpoint sets a single setting value (upsert pattern)",
-        "GET /api/settings is a public endpoint (no auth required)",
-        "PUT /api/settings/:key is a protected endpoint (requires auth)",
-        "Frontend API client has settings.get() returning Promise<Record<string, string>> and settings.set(key, value) returning Promise<void>",
-        "cargo test passes",
-        "npm run check passes with zero errors"
+        "In apps/dashboard/src/lib/types/telemetry.ts, update AutotuneWsMessage.autotune.data from Record<string, unknown> to a union type or keep Record<string, unknown> but add a comment documenting the expected fields for both status and results",
+        "In apps/dashboard/src/lib/stores/autotune.svelte.ts, extend AutotuneStatus interface: add optional mode (string), totalSteps (number) fields",
+        "In apps/dashboard/src/lib/stores/autotune.svelte.ts, extend AutotuneResults interface with: mode (optional string), tuning_method (optional string), quality (optional string — 'good'|'acceptable'|'fallback'|'poor'), original_kp/ki/kd (optional numbers), oscillation_period (optional number), oscillation_amplitude (optional number), ultimate_gain (optional number), consistency_pct (optional number), asymmetry_ratio (optional number), hysteresis_correction (optional number), process_gain_K (optional number), time_constant_tau (optional number), dead_time_theta (optional number), aggressiveness (optional number), simc_tau_c (optional number), duration (optional number)",
+        "Add a new exported interface AutotuneStartParams: { targetTemp: number; mode?: 'relay' | 'step_response'; tuningMethod?: string; bias?: number; amplitude?: number; hysteresis?: number; aggressiveness?: number; }",
+        "npm run check passes (typecheck)",
+        "Typecheck passes"
       ],
       "priority": 2,
-      "passes": true,
-      "notes": "Add the table in init_db alongside other CREATE TABLE statements in main.rs. For the endpoints, add them inline in main.rs following the pattern of other simple handlers. Settings GET returns all rows as { key: value } JSON object using a simple SELECT query. Settings PUT uses INSERT OR REPLACE (SQLite upsert). Frontend API client methods go in the existing $lib/api/client.ts file — add a new 'settings' export object similar to the profiles object."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "PF-003",
-      "title": "Create profile store with Svelte 5 runes",
-      "description": "As a developer, I need a centralized profile store so multiple components (chart, readings, controls) can access the active profile and following state.",
+      "id": "US-003",
+      "title": "Update frontend API client to pass auto-tune start parameters and expose history",
+      "description": "As a frontend developer, I want the autotune API client to accept and send all configurable parameters on start, and expose the history endpoints that already exist in the backend.",
       "acceptanceCriteria": [
-        "New file $lib/stores/profile.svelte.ts using Svelte 5 $state runes",
-        "Exports reactive state: activeProfile (ProfileWithPoints | null), isFollowing (boolean), lastSentSetpoint (number | null)",
-        "Export functions: loadProfile(id: string), unloadProfile(), startFollowing(), stopFollowing()",
-        "loadProfile fetches profile via profiles.get(id) and sets activeProfile",
-        "unloadProfile clears activeProfile and stops following",
-        "interpolateTarget(elapsedMs: number, lookaheadMs: number) pure function: linear interpolation between sorted profile points, holds first/last point values at boundaries",
-        "interpolateTarget exported separately for unit testing",
-        "npm run check passes with zero errors"
+        "In apps/dashboard/src/lib/api/client.ts, update autotune.start() signature to accept a params object (AutotuneStartParams) instead of just (deviceId, targetTemp)",
+        "autotune.start() sends JSON body with target_temperature plus any provided optional fields: mode, tuning_method, bias, amplitude, hysteresis, aggressiveness — using snake_case keys matching the backend struct",
+        "Import or define AutotuneStartParams type in client.ts (import from stores/autotune.svelte.ts or define locally)",
+        "Update AutotuneResultsResponse interface: change results field from { Kp: number; Ki: number; Kd: number } to Record<string, unknown> (the store handles typed parsing)",
+        "Add autotune.getStatusHistory(deviceId, sinceSecs?, limit?) method calling GET /api/roaster/{deviceId}/autotune/status with query params",
+        "Add autotune.getResultsHistory(deviceId, sinceSecs?, limit?) method calling GET /api/roaster/{deviceId}/autotune/results with query params",
+        "npm run check passes (typecheck)",
+        "Typecheck passes"
       ],
       "priority": 3,
-      "passes": true,
-      "notes": "Use .svelte.ts extension to enable runes outside components. Pattern: let activeProfile = $state<ProfileWithPoints | null>(null). Export as getter functions or use the module-level $state pattern. The interpolation function should be pure (no side effects) and take elapsed time in milliseconds + lookahead in milliseconds, returning target temperature. Profile points have time_seconds and target_temp fields — convert to milliseconds for chart compatibility. Sort points by time_seconds before interpolating."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "PF-004",
-      "title": "Create profile designer with visual chart editor",
-      "description": "As a roaster, I want to create and edit roast profiles by placing points on a chart so I can design temperature curves visually.",
+      "id": "US-004",
+      "title": "Update autotune store for new parameters, step response phases, and quality metrics",
+      "description": "As a frontend developer, I want the autotune reactive store to handle the new auto-tune modes, forward configurable parameters on start, parse quality metrics from results, and recognize step response phase names.",
       "acceptanceCriteria": [
-        "New ProfileDesigner.svelte component at $lib/components/ProfileDesigner.svelte",
-        "ECharts scatter+line chart showing profile points (X: time in seconds, Y: temperature in °C)",
-        "Click on chart area to add a new point at that time/temperature position using ECharts click event",
-        "Click existing point to select it and show editable input fields for time_seconds, target_temp, fan_speed",
-        "Delete selected point with a delete button or keyboard Delete key",
-        "Points connected with lines and sorted by time_seconds automatically",
-        "Table view toggle: button switches between chart view and editable data table showing all points",
-        "Profile metadata inputs: name (required), description, charge_temp, target_end_temp",
-        "Save button calls profiles.create() for new or profiles.update() for existing profiles",
-        "Cancel button navigates back to /profiles without saving",
-        "New route files: src/routes/profiles/new/+page.svelte and src/routes/profiles/[id]/edit/+page.svelte that render ProfileDesigner",
-        "npm run check passes with zero errors",
-        "npm run build succeeds"
+        "Update startAutotune() signature to accept AutotuneStartParams instead of (deviceId, targetTemp)",
+        "startAutotune() passes the full params object to autotuneApi.start()",
+        "Store the selected mode in autotuneState (add mode field to the $state object, default 'relay')",
+        "In handleAutotuneEvent() for status messages: recognize step response phases — add 'STEP_BASELINE', 'STEP_UP', 'STEP_SETTLE', 'STEP_ANALYZE' to activePhases array",
+        "In handleAutotuneEvent() for status messages: parse 'mode' field from data and store in autotuneState.status.mode",
+        "In handleAutotuneEvent() for status messages: parse 'total_steps' field and use it for progress calculation instead of hardcoded 15; if not present, default to 12 for relay or use phase-based progress for step response",
+        "In handleAutotuneEvent() for results messages: parse all new quality metric fields into the extended AutotuneResults interface (tuning_method, quality, oscillation_period, oscillation_amplitude, ultimate_gain, consistency_pct, asymmetry_ratio, hysteresis_correction, process_gain_K, time_constant_tau, dead_time_theta, aggressiveness, simc_tau_c, mode, duration, original_kp/ki/kd)",
+        "In fetchLatestAutotune(): parse and store the extended results fields on page reload recovery",
+        "npm run check passes (typecheck)",
+        "Typecheck passes"
       ],
       "priority": 4,
-      "passes": true,
-      "notes": "Use the existing Chart.svelte wrapper component. For click-to-add, listen to the ECharts 'click' event on the chart instance. Use ECharts scatter series for draggable points overlaid on a line series. For the table view, use a simple HTML table with input fields bound to point data via $state. The designer should accept an optional profileId prop — if provided, load existing profile data for editing. Route /profiles/new renders ProfileDesigner with no initial data. Route /profiles/[id]/edit loads profile via a +page.ts load function and passes data to ProfileDesigner. Use goto('/profiles') from $app/navigation on cancel/save. Chart styling should match existing TelemetryChart colors (dark theme, amber accents)."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "PF-005",
-      "title": "Add profile overlay to telemetry chart",
-      "description": "As a roaster, I want to see the loaded profile as a reference curve on the real-time telemetry chart so I can visually track how well I'm following the target profile.",
+      "id": "US-005",
+      "title": "Add mode selector, tuning method selector, and advanced parameters to AutotunePanel",
+      "description": "As a roaster operator, I want to choose between relay and step response auto-tune modes, select a tuning method, and optionally configure advanced relay parameters before starting auto-tune.",
       "acceptanceCriteria": [
-        "When activeProfile is set in the profile store, TelemetryChart renders an additional 'Profile' series",
-        "Profile series is a dashed purple line (#a855f7) with lineStyle: { type: 'dashed', width: 2 }",
-        "Profile curve X-axis uses elapsed milliseconds (same as telemetry data) — convert profile points from seconds to ms",
-        "Profile series shows in the chart legend labeled 'Profile'",
-        "Loading/unloading a profile does not clear telemetry history or reset the chart",
-        "Profile overlay works correctly alongside BT, ET, RoR, Heater, and Fan series",
-        "npm run check passes with zero errors"
+        "Add a mode selector below the target temperature input: two radio buttons or a select dropdown with options 'Relay (Oscillation)' and 'Step Response (SIMC)' — default to 'relay'",
+        "When mode is 'relay', show a tuning method dropdown below mode selector: 'Tyreus-Luyben (Conservative)' (default), 'Z-N Classic (Aggressive)', 'Z-N Some Overshoot', 'Z-N No Overshoot'",
+        "When mode is 'step_response', show an aggressiveness slider or number input (0.1 to 2.0, default 1.0) with label 'Aggressiveness' and help text 'Lower = more conservative, Higher = faster response'",
+        "Add a collapsible 'Advanced Parameters' section (collapsed by default) with inputs for: Bias (10-90%, default 50), Amplitude (5-45%, default 25), Hysteresis (0.1-5.0°C, default 1.0)",
+        "All selector values and parameter inputs are disabled during active auto-tune (autotuneState.isAutotuning)",
+        "handleStart() passes all configured parameters to startAutotune() using the AutotuneStartParams interface",
+        "Input styling matches existing target temperature input: same border, bg, focus ring classes",
+        "Step count display during RUNNING phase shows 'Step X of 12' (from totalSteps) instead of hardcoded '~15'",
+        "npm run check passes (typecheck)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
       ],
       "priority": 5,
-      "passes": true,
-      "notes": "Import the profile store in TelemetryChart.svelte. In the $derived.by chart option computation, check if activeProfile has points. If so, add a new series to the series array: { name: 'Profile', type: 'line', data: points.map(p => [p.time_seconds * 1000, p.target_temp]), itemStyle: { color: '#a855f7' }, lineStyle: { type: 'dashed', width: 2 }, showSymbol: false }. The profile uses yAxisIndex: 0 (temperature axis, same as BT/ET). No markLine needed — it's a full series."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "PF-006",
-      "title": "Implement profile following (auto setpoint control)",
-      "description": "As a roaster, I want the system to automatically set temperature targets from the loaded profile when in auto mode so that the PID controller follows the profile curve.",
+      "id": "US-006",
+      "title": "Add quality metrics display and step response phase support to AutotunePanel results",
+      "description": "As a roaster operator, I want to see auto-tune quality metrics and step response phase indicators so I can evaluate the tuning confidence before applying results.",
       "acceptanceCriteria": [
-        "'Follow Profile' toggle button added to SessionControls.svelte or near the session control area",
-        "Button only enabled when: a profile is loaded AND a session is active (started, not paused)",
-        "When enabled, uses $effect with setInterval(1000) to run every second",
-        "Each tick: interpolates target temp at (current_elapsed_ms + lookahead_ms) using profile store interpolateTarget()",
-        "Sends POST /api/roaster/:device_id/control/setpoint only when |new_target - lastSentSetpoint| >= 1.0°C (hysteresis)",
-        "Automatically calls control.setMode(deviceId, 'auto') when following starts",
-        "Following stops when: session ends, profile is unloaded, or user clicks toggle off",
-        "Lookahead value read from settings store (profile_lookahead_seconds, default 20s)",
-        "npm run check passes with zero errors"
+        "Add step response phase colors and labels: STEP_BASELINE = 'Baseline' (text-cyan-400), STEP_UP = 'Step Up' (text-amber-400), STEP_SETTLE = 'Settling' (text-blue-400), STEP_ANALYZE = 'Analyzing' (text-blue-400)",
+        "Add phase color for FAILED state: text-red-400, bg-red-500 (currently only ERROR is handled)",
+        "In results section, show a quality badge above the PID table: 'Good' (green), 'Acceptable' (amber), 'Poor' (red), 'Fallback' (gray) based on autotuneState.results.quality",
+        "Show the tuning method used: e.g., 'Method: Tyreus-Luyben' or 'Method: SIMC Step Response' below the quality badge",
+        "For relay mode results, show a collapsible 'Tuning Details' section with: Oscillation Period (seconds), Oscillation Amplitude (°C), Ultimate Gain (Ku), Consistency (%), Asymmetry Ratio",
+        "For step_response mode results, show a collapsible 'Process Model (FOPDT)' section with: Process Gain K, Time Constant τ (seconds), Dead Time θ (seconds), Aggressiveness, Closed-loop τc (seconds)",
+        "Show duration of auto-tune run if available: 'Completed in Xm Ys'",
+        "Show original PID values in the comparison table (from results.original_kp/ki/kd) instead of reading from live telemetry — the original values are the ones from before auto-tune started",
+        "npm run check passes (typecheck)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
       ],
       "priority": 6,
-      "passes": true,
-      "notes": "The follow logic lives in a $effect in a component (e.g., SessionControls or a new FollowProfile.svelte helper component). Use the telemetry store to get current elapsed time from the session start. The control API is at $lib/api/client.ts: control.setSetpoint(deviceId, value). The profile store's startFollowing/stopFollowing manage the isFollowing boolean. The setInterval runs inside a $effect cleanup pattern: $effect(() => { if (!isFollowing) return; const id = setInterval(..., 1000); return () => clearInterval(id); }). Read settings on mount via settings.get() and extract profile_lookahead_seconds."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "PF-007",
-      "title": "Show profile temperature delta in current readings",
-      "description": "As a roaster, I want to see the difference between actual bean temperature and the profile target so I can quickly assess if the roast is ahead or behind the curve.",
+      "id": "US-007",
+      "title": "Update AutotuneDashboardWidget for step response modes and quality indicator",
+      "description": "As a roaster operator viewing the dashboard, I want the compact autotune widget to show the correct phase labels, mode indicator, and quality badge for both relay and step response modes.",
       "acceptanceCriteria": [
-        "CurrentReadings.svelte shows a 'Delta' value when a profile is loaded and a session is active",
-        "Delta = actual BT - profile target BT at current elapsed time (positive = ahead/hotter, negative = behind/cooler)",
-        "Display format: '+2.3°C' or '-1.5°C' with sign always shown",
-        "Color coding: text-green-400 when |delta| <= 2°C, text-amber-400 when 2-5°C, text-red-400 when > 5°C",
-        "Delta updates with each telemetry tick (real-time)",
-        "Delta row hidden when no profile is loaded or no active session",
-        "npm run check passes with zero errors"
+        "Add step response phase labels and colors matching AutotunePanel: STEP_BASELINE, STEP_UP, STEP_SETTLE, STEP_ANALYZE with appropriate colors",
+        "Add FAILED phase handling (same as ERROR — text-red-400)",
+        "When auto-tune is active, show a small mode indicator: 'Relay' or 'Step' next to the phase label",
+        "In results display, show quality badge inline: small colored dot or text (Good/Acceptable/Poor/Fallback) next to 'Recommended PID' heading",
+        "Step count display uses totalSteps from store instead of hardcoded 15",
+        "Progress calculation uses totalSteps from store instead of hardcoded 15",
+        "All changes maintain the compact widget layout (p-3 spacing, smaller text)",
+        "npm run check passes (typecheck)",
+        "Typecheck passes",
+        "Verify in browser using dev-browser skill"
       ],
       "priority": 7,
-      "passes": true,
-      "notes": "Import the profile store into CurrentReadings.svelte. Use $derived to compute the delta: get current BT from telemetry, get current elapsed time, call interpolateTarget(elapsedMs, 0) (no lookahead for display — show actual delta, not lookahead delta). The CurrentReadings component already has a readings grid pattern — add a new entry conditionally rendered with {#if activeProfile && elapsedMs > 0}. Use $derived for the color class based on Math.abs(delta)."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "PF-008",
-      "title": "Add profile selector to session creation",
-      "description": "As a roaster, I want to select a profile when creating a new roast session so the profile is automatically loaded for following.",
+      "id": "US-008",
+      "title": "Update autotune tests for new modes, parameters, and quality metrics",
+      "description": "As a developer, I want comprehensive vitest tests covering the new auto-tune functionality to prevent regressions.",
       "acceptanceCriteria": [
-        "Profile dropdown added to the session creation flow (wherever sessions are created — check SessionControls.svelte or the dashboard page)",
-        "Dropdown shows profile list with name and basic metadata (charge temp, duration)",
-        "Selected profile_id included in POST /api/sessions request body",
-        "When a session with a profile is started, the profile store automatically loads the associated profile",
-        "User can start a session without selecting a profile (optional field)",
-        "npm run check passes with zero errors"
+        "In apps/dashboard/src/lib/stores/autotune.test.ts, add test: 'parses step response status phases' — verify STEP_BASELINE, STEP_UP, STEP_SETTLE, STEP_ANALYZE are recognized as active phases with isAutotuning = true",
+        "Add test: 'parses FAILED phase as inactive' — verify FAILED sets isAutotuning = false",
+        "Add test: 'parses extended results with quality metrics' — verify tuning_method, quality, oscillation_period, consistency_pct, mode fields are parsed from results event data",
+        "Add test: 'parses step response results with FOPDT model' — verify process_gain_K, time_constant_tau, dead_time_theta, aggressiveness, simc_tau_c are parsed",
+        "Add test: 'uses total_steps for progress calculation' — verify progress uses total_steps from status data instead of hardcoded 15",
+        "Add test: 'parses mode from status messages' — verify mode field is stored in autotuneState.status",
+        "Add test: 'startAutotune passes full params' — mock fetch and verify all AutotuneStartParams fields are sent in the request body with correct snake_case keys",
+        "All existing tests still pass",
+        "npm test passes",
+        "Typecheck passes"
       ],
       "priority": 8,
-      "passes": true,
-      "notes": "The CreateSessionRequest in the API client accepts an optional profile_id field — check models.rs for the backend model. The sessions.create() function in client.ts sends the request. Profile list can be fetched via profiles.list(). When a session starts and has a profile_id, call profileStore.loadProfile(profileId). Check how session creation currently works — it may be in SessionControls.svelte or the main dashboard page. The profile dropdown should use the same select styling as DeviceSelector (bg-card, border-border, text-foreground)."
+      "passes": false,
+      "notes": ""
     },
     {
-      "id": "PF-009",
-      "title": "Integrate Artisan import into profile designer",
-      "description": "As a roaster, I want to import an Artisan .alog file and review/edit the imported points in the profile designer before saving.",
+      "id": "US-009",
+      "title": "Final audit: verify full stack integration compiles, typechecks, and tests pass",
+      "description": "As the project owner, I want a comprehensive audit confirming that all rustRoast changes compile, typecheck, pass tests, and integrate correctly with the ESP32 auto-tune MQTT protocol.",
       "acceptanceCriteria": [
-        "Import button on the profiles page opens a file picker for .alog/.json files",
-        "After selecting a file, navigates to /profiles/new with imported data passed via URL state or a temporary store",
-        "Imported profile opens in ProfileDesigner with points visible on the chart for review",
-        "User can edit imported points before saving (same editing capabilities as manual creation)",
-        "Uses existing POST /api/profiles/import/artisan endpoint to parse the file, then loads result into designer",
-        "Error messages shown for invalid or unparseable files using notifications store",
-        "npm run check passes with zero errors"
+        "cargo build --workspace succeeds with no errors",
+        "cargo test --workspace passes all tests",
+        "cargo clippy --workspace -- -D warnings passes with no warnings",
+        "cd apps/dashboard && npm run check passes (SvelteKit typecheck)",
+        "cd apps/dashboard && npm test passes all vitest tests",
+        "Verify AutoTuneStartPayload in main.rs has all 7 fields (target_temperature + 6 optional) with correct serde attributes",
+        "Verify api_autotune_start forwards the full serialized body as MQTT payload",
+        "Verify AutotuneResults interface in autotune.svelte.ts has all quality metric fields for both relay and step response modes",
+        "Verify AutotuneStartParams interface exists and is used by startAutotune() and autotune.start()",
+        "Verify AutotunePanel.svelte has mode selector, tuning method selector, advanced parameters section, and quality metrics display",
+        "Verify AutotuneDashboardWidget.svelte has step response phase support and quality badge",
+        "Verify handleAutotuneEvent() recognizes all step response phases as active",
+        "Verify backward compatibility: a start request with only target_temperature still works",
+        "If any issue is found, fix it now and document what was fixed",
+        "Typecheck passes"
       ],
       "priority": 9,
-      "passes": true,
-      "notes": "The current profiles page already has an import flow that calls profiles.importArtisan() and saves directly. Change the flow to: (1) call importArtisan to parse and save, (2) redirect to /profiles/[newId]/edit to open in designer. OR: create a client-side parser that reads the .alog JSON and populates the designer without saving first. The simpler approach is to import via API (which saves), then redirect to the edit page. The existing import code is in src/routes/profiles/+page.svelte handleImport()."
-    },
-    {
-      "id": "AT-001",
-      "title": "Create autotune store for state management",
-      "description": "As a developer, I need a centralized autotune store so multiple components can access autotune status and results consistently.",
-      "acceptanceCriteria": [
-        "New file $lib/stores/autotune.svelte.ts using Svelte 5 $state runes",
-        "Exports reactive state: status (phase string, step count, progress %), results (Kp, Ki, Kd numbers or null), isAutotuning (boolean), targetTemp (number | null)",
-        "Derives state from WebSocket autotune events in the telemetry stream (subscribe to telemetry store messages)",
-        "Parses autotune event types: status updates set phase/step/progress, results updates set Kp/Ki/Kd",
-        "On initialization, fetches latest status via GET /api/roaster/:device_id/autotune/status/latest to handle page refresh during active autotune",
-        "Export functions: startAutotune(deviceId, targetTemp), stopAutotune(deviceId), applyResults(deviceId), dismissResults()",
-        "dismissResults() clears results state",
-        "npm run check passes with zero errors"
-      ],
-      "priority": 10,
-      "passes": true,
-      "notes": "The WebSocket at /ws/telemetry forwards autotune events. In main.rs telemetry_ws_loop, autotune messages are sent as JSON: { autotune: { type: 'status'|'results', data: ... } }. The store should subscribe to the telemetry WebSocket messages and filter for autotune events. Use the control API for start/stop/apply: the autotune endpoints are on the existing API client pattern but not yet in client.ts — add autotune.start(deviceId, { target_temp }), autotune.stop(deviceId), autotune.apply(deviceId). For the status fetch on init, call fetch directly or add to the API client."
-    },
-    {
-      "id": "AT-002",
-      "title": "Create autotune control panel",
-      "description": "As a roaster, I want a UI panel to start and control PID autotune so I can find optimal PID parameters.",
-      "acceptanceCriteria": [
-        "New AutotunePanel.svelte component at $lib/components/AutotunePanel.svelte",
-        "Target temperature number input with range 150-250°C (default 200°C) with step=5",
-        "Start Autotune button calls autotuneStore.startAutotune(deviceId, targetTemp)",
-        "Stop Autotune button (shown while autotuning) calls autotuneStore.stopAutotune(deviceId)",
-        "Panel disabled or shows warning when a roast session is in progress",
-        "Panel only functional when a device is selected",
-        "Accessible from the settings page in a dedicated 'PID Autotune' section",
-        "Uses dark theme styling consistent with other panels (bg-card, border-border)",
-        "npm run check passes with zero errors"
-      ],
-      "priority": 11,
-      "passes": true,
-      "notes": "Component receives deviceId as a prop. Use $state for targetTemp input. The start button should be disabled while isAutotuning is true, and stop should only show when isAutotuning. Check session status from the telemetry store or session state to prevent starting during a roast. Place on the settings page (src/routes/settings/+page.svelte) as a new section below existing settings content. Use lucide-svelte icons: Play, Square, Zap for start/stop/autotune."
-    },
-    {
-      "id": "AT-003",
-      "title": "Display autotune progress in real-time",
-      "description": "As a roaster, I want to see autotune progress while it's running so I know how far along the relay test is.",
-      "acceptanceCriteria": [
-        "AutotunePanel shows current phase: Heating, Stabilizing, Running, Analyzing, Complete, Error",
-        "Phase displayed with appropriate color: amber for heating/stabilizing, green for running, blue for analyzing, green for complete, red for error",
-        "Shows step count during Running phase (e.g., 'Step 7 of ~15')",
-        "Progress bar with estimated percentage based on step_count / estimated_total (estimate ~15 cycles)",
-        "Shows current BT reading and target temperature during autotune",
-        "Status updates in real-time from WebSocket events (no polling)",
-        "Error state shows descriptive message from the autotune event data",
-        "npm run check passes with zero errors"
-      ],
-      "priority": 12,
-      "passes": true,
-      "notes": "All state comes from the autotune store. The store's status object has phase, step_count from the WebSocket events. Progress estimate: (step_count / 15) * 100, capped at 95% until ANALYZING phase. Use Tailwind progress bar: div with bg-amber-500 and width percentage via inline style. Phase colors via conditional class: {#if phase === 'RUNNING'}text-green-400{:else if phase === 'ERROR'}text-red-400{/if}. Current BT comes from the telemetry store."
-    },
-    {
-      "id": "AT-004",
-      "title": "Display autotune results with apply/discard",
-      "description": "As a roaster, I want to see recommended PID parameters after autotune and choose to apply or discard them.",
-      "acceptanceCriteria": [
-        "Results section in AutotunePanel shows Kp, Ki, Kd values after autotune completes",
-        "Current PID values displayed alongside recommended values for comparison (current values from telemetry: Kp, Ki, Kd fields)",
-        "Apply button calls autotuneStore.applyResults(deviceId) which sends POST /api/roaster/:device_id/autotune/apply",
-        "Discard button calls autotuneStore.dismissResults() to clear the results display",
-        "Success notification shown after applying (via notifications store)",
-        "Failure notification shown if apply fails",
-        "Results persist in the store until dismissed (survive component re-renders)",
-        "On page load, if autotuneStore has no results, fetch via GET /api/roaster/:device_id/autotune/results/latest",
-        "npm run check passes with zero errors"
-      ],
-      "priority": 13,
-      "passes": true,
-      "notes": "The results object from the autotune event contains Kp, Ki, Kd as numbers. Current PID values come from the latest telemetry (telemetry store: $telemetry.Kp, $telemetry.Ki, $telemetry.Kd). Display as a comparison table: Current | Recommended columns. The apply endpoint sends the PID values to the ESP32 via MQTT. Use the notifications store from $lib/stores/notifications.ts for success/failure messages. Style the results section with bg-green-500/10 border-green-500/30 to indicate success."
-    },
-    {
-      "id": "AT-005",
-      "title": "Show autotune annotations on telemetry chart",
-      "description": "As a roaster, I want to see autotune-related annotations on the telemetry chart during and after a relay test.",
-      "acceptanceCriteria": [
-        "During autotune, horizontal dashed line at target temperature shown on the chart (#f97316 orange)",
-        "Autotune target line labeled 'AT Target' in the legend",
-        "Autotune target line only shows when isAutotuning is true or results are pending",
-        "Existing BT, ET, Heater, Fan, RoR series continue to render normally during autotune",
-        "npm run check passes with zero errors"
-      ],
-      "priority": 14,
-      "passes": true,
-      "notes": "Import the autotune store in TelemetryChart.svelte. When isAutotuning or results are pending, add a markLine to the BT series (or a separate constant-value series) at the targetTemp value. Use markLine: { data: [{ yAxis: targetTemp, lineStyle: { color: '#f97316', type: 'dashed' }, label: { formatter: 'AT Target', color: '#f97316' } }] }. Alternative: add a separate series with a constant value across the full X range. The simpler markLine approach is preferred."
-    },
-    {
-      "id": "PF-010",
-      "title": "Add lookahead setting to settings page",
-      "description": "As a roaster, I want to configure the profile following lookahead time in settings so I can adjust how far ahead the system anticipates the profile curve.",
-      "acceptanceCriteria": [
-        "Lookahead input field on settings page with descriptive label: 'Profile Lookahead (seconds)'",
-        "Help text explaining: 'How far ahead to read the profile curve when following. Higher values smooth out transitions. Default: 20s'",
-        "Number input with range 5-60 seconds, step=1",
-        "Current value loaded from backend settings API on page load",
-        "Changes saved via PUT /api/settings/profile_lookahead_seconds on blur or with a Save button",
-        "Default value of 20 shown if no setting exists",
-        "npm run check passes with zero errors"
-      ],
-      "priority": 15,
-      "passes": true,
-      "notes": "Add to the existing settings page at src/routes/settings/+page.svelte. Load settings via the settings.get() API method in the page's load function or on mount. Use $state for the input value. Save on change using settings.set('profile_lookahead_seconds', String(value)). Follow the same input styling pattern as other settings fields on the page."
-    },
-    {
-      "id": "PF-011",
-      "title": "Add frontend unit tests for profile and autotune features",
-      "description": "As a developer, I want unit tests covering profile interpolation, store state transitions, and hysteresis logic.",
-      "acceptanceCriteria": [
-        "Test file for interpolateTarget function: linear interpolation between two points, extrapolation before first point (returns first temp), extrapolation after last point (returns last temp), exact point match, single-point profile",
-        "Test file for profile store: loadProfile sets activeProfile, unloadProfile clears state, startFollowing/stopFollowing toggles isFollowing",
-        "Test file for autotune store: status transitions (idle → heating → running → complete), result parsing from event data, dismissResults clears state",
-        "Test for hysteresis logic: setpoint only sent when delta >= 1°C",
-        "All tests pass with npm test",
-        "npm run check passes with zero errors"
-      ],
-      "priority": 16,
-      "passes": true,
-      "notes": "Tests go in files alongside source: e.g., $lib/stores/profile.test.ts, $lib/stores/autotune.test.ts. The project uses vitest (see existing tests: $lib/stores/telemetry.test.ts). For testing Svelte 5 rune stores (.svelte.ts files), you may need to test the exported pure functions directly rather than the reactive state. The interpolateTarget function should be a pure exported function specifically for testability. Mock fetch for API calls in store tests."
+      "passes": false,
+      "notes": ""
     }
   ]
 }

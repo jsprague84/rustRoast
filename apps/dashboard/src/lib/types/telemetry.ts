@@ -24,7 +24,17 @@ export interface TelemetryMessage {
 	telemetry: Telemetry;
 }
 
-/** WebSocket message envelope for autotune events. */
+/** WebSocket message envelope for autotune events.
+ *
+ * Status data fields: phase, current_step/step_count, target_temperature,
+ *   error, mode ('relay'|'step_response'), total_steps
+ *
+ * Results data fields: recommended_kp/ki/kd, tuning_method, quality
+ *   ('good'|'acceptable'|'fallback'|'poor'), mode, duration,
+ *   original_kp/ki/kd, oscillation_period, oscillation_amplitude,
+ *   ultimate_gain, consistency_pct, asymmetry_ratio, hysteresis_correction,
+ *   process_gain_K, time_constant_tau, dead_time_theta, aggressiveness, simc_tau_c
+ */
 export interface AutotuneWsMessage {
 	device_id: string;
 	autotune: {

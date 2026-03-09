@@ -1341,9 +1341,21 @@ async fn api_get_devices(State(state): State<AppState>) -> Response {
 
 // ----- Auto-tune control & read endpoints -----
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct AutoTuneStartPayload {
     target_temperature: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tuning_method: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bias: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    amplitude: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hysteresis: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    aggressiveness: Option<f64>,
 }
 
 //#[utoipa::path(post, path = "/api/roaster/{device_id}/autotune/start", request_body = AutoTuneStartPayload,
@@ -1364,8 +1376,61 @@ async fn api_autotune_start(
         )
             .into_response();
     }
+    if let Some(ref m) = body.mode {
+        if m != "relay" && m != "step_response" {
+            return (
+                StatusCode::BAD_REQUEST,
+                "mode must be 'relay' or 'step_response'",
+            )
+                .into_response();
+        }
+    }
+    if let Some(ref tm) = body.tuning_method {
+        if !["zn_classic", "tyreus_luyben", "zn_some_overshoot", "zn_no_overshoot"]
+            .contains(&tm.as_str())
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                "tuning_method must be one of: zn_classic, tyreus_luyben, zn_some_overshoot, zn_no_overshoot",
+            )
+                .into_response();
+        }
+    }
+    if let Some(b) = body.bias {
+        if !(10.0..=90.0).contains(&b) {
+            return (StatusCode::BAD_REQUEST, "bias must be between 10.0 and 90.0")
+                .into_response();
+        }
+    }
+    if let Some(a) = body.amplitude {
+        if !(5.0..=45.0).contains(&a) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "amplitude must be between 5.0 and 45.0",
+            )
+                .into_response();
+        }
+    }
+    if let Some(h) = body.hysteresis {
+        if !(0.1..=5.0).contains(&h) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "hysteresis must be between 0.1 and 5.0",
+            )
+                .into_response();
+        }
+    }
+    if let Some(ag) = body.aggressiveness {
+        if !(0.1..=2.0).contains(&ag) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "aggressiveness must be between 0.1 and 2.0",
+            )
+                .into_response();
+        }
+    }
     let topic = rustroast_core::autotune_start(&device_id);
-    let payload = serde_json::json!({"target_temperature": body.target_temperature}).to_string();
+    let payload = serde_json::to_string(&body).unwrap_or_default();
     publish_qos1_and_maybe_wait_ack(
         &state,
         &topic,

@@ -295,15 +295,33 @@ export interface AutotuneStatusResponse {
 export interface AutotuneResultsResponse {
 	device_id: string;
 	timestamp: number;
-	results: { Kp: number; Ki: number; Kd: number };
+	results: Record<string, unknown>;
+}
+
+export interface AutotuneStartParams {
+	targetTemp: number;
+	mode?: 'relay' | 'step_response';
+	tuningMethod?: string;
+	bias?: number;
+	amplitude?: number;
+	hysteresis?: number;
+	aggressiveness?: number;
 }
 
 export const autotune = {
-	start: (deviceId: string, targetTemp: number) =>
-		request<void>(`/api/roaster/${deviceId}/autotune/start`, {
+	start: (deviceId: string, params: AutotuneStartParams) => {
+		const body: Record<string, unknown> = { target_temperature: params.targetTemp };
+		if (params.mode !== undefined) body.mode = params.mode;
+		if (params.tuningMethod !== undefined) body.tuning_method = params.tuningMethod;
+		if (params.bias !== undefined) body.bias = params.bias;
+		if (params.amplitude !== undefined) body.amplitude = params.amplitude;
+		if (params.hysteresis !== undefined) body.hysteresis = params.hysteresis;
+		if (params.aggressiveness !== undefined) body.aggressiveness = params.aggressiveness;
+		return request<void>(`/api/roaster/${deviceId}/autotune/start`, {
 			method: 'POST',
-			body: JSON.stringify({ target_temperature: targetTemp })
-		}, true),
+			body: JSON.stringify(body)
+		}, true);
+	},
 
 	stop: (deviceId: string) =>
 		request<void>(`/api/roaster/${deviceId}/autotune/stop`, {
@@ -319,5 +337,25 @@ export const autotune = {
 		request<AutotuneStatusResponse>(`/api/roaster/${deviceId}/autotune/status/latest`),
 
 	getLatestResults: (deviceId: string) =>
-		request<AutotuneResultsResponse>(`/api/roaster/${deviceId}/autotune/results/latest`)
+		request<AutotuneResultsResponse>(`/api/roaster/${deviceId}/autotune/results/latest`),
+
+	getStatusHistory: (deviceId: string, sinceSecs?: number, limit?: number) => {
+		const params = new URLSearchParams();
+		if (sinceSecs !== undefined) params.set('since_secs', String(sinceSecs));
+		if (limit !== undefined) params.set('limit', String(limit));
+		const qs = params.toString();
+		return request<AutotuneStatusResponse[]>(
+			`/api/roaster/${deviceId}/autotune/status${qs ? `?${qs}` : ''}`
+		);
+	},
+
+	getResultsHistory: (deviceId: string, sinceSecs?: number, limit?: number) => {
+		const params = new URLSearchParams();
+		if (sinceSecs !== undefined) params.set('since_secs', String(sinceSecs));
+		if (limit !== undefined) params.set('limit', String(limit));
+		const qs = params.toString();
+		return request<AutotuneResultsResponse[]>(
+			`/api/roaster/${deviceId}/autotune/results${qs ? `?${qs}` : ''}`
+		);
+	}
 };

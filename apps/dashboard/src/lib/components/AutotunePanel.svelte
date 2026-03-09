@@ -11,12 +11,27 @@
 		dismissResults,
 		initAutotuneSubscription,
 		destroyAutotuneSubscription,
-		fetchLatestAutotune
+		fetchLatestAutotune,
+		type AutotuneStartParams
 	} from '$lib/stores/autotune.svelte.js';
+
+	const phaseLabelMap: Record<string, string> = {
+		HEATING: 'Heating',
+		STABILIZING: 'Stabilizing',
+		RUNNING: 'Running',
+		ANALYZING: 'Analyzing',
+		COMPLETE: 'Complete',
+		ERROR: 'Error',
+		FAILED: 'Failed',
+		STEP_BASELINE: 'Baseline',
+		STEP_UP: 'Step Up',
+		STEP_SETTLE: 'Settling',
+		STEP_ANALYZE: 'Analyzing'
+	};
 
 	const phaseLabel = $derived(
 		autotuneState.status?.phase
-			? autotuneState.status.phase.charAt(0) + autotuneState.status.phase.slice(1).toLowerCase()
+			? (phaseLabelMap[autotuneState.status.phase] ?? autotuneState.status.phase.charAt(0) + autotuneState.status.phase.slice(1).toLowerCase())
 			: ''
 	);
 
@@ -30,10 +45,17 @@
 			case 'RUNNING':
 				return 'text-green-400';
 			case 'ANALYZING':
+			case 'STEP_SETTLE':
+			case 'STEP_ANALYZE':
 				return 'text-blue-400';
+			case 'STEP_BASELINE':
+				return 'text-cyan-400';
+			case 'STEP_UP':
+				return 'text-amber-400';
 			case 'COMPLETE':
 				return 'text-green-400';
 			case 'ERROR':
+			case 'FAILED':
 				return 'text-red-400';
 			default:
 				return 'text-muted-foreground';
@@ -46,14 +68,19 @@
 		switch (phase) {
 			case 'HEATING':
 			case 'STABILIZING':
+			case 'STEP_UP':
 				return 'bg-amber-500';
 			case 'RUNNING':
 				return 'bg-green-500';
 			case 'ANALYZING':
+			case 'STEP_BASELINE':
+			case 'STEP_SETTLE':
+			case 'STEP_ANALYZE':
 				return 'bg-blue-500';
 			case 'COMPLETE':
 				return 'bg-green-500';
 			case 'ERROR':
+			case 'FAILED':
 				return 'bg-red-500';
 			default:
 				return 'bg-amber-500';
@@ -61,6 +88,13 @@
 	});
 
 	let targetTemp = $state(200);
+	let mode = $state<'relay' | 'step_response'>('relay');
+	let tuningMethod = $state('tyreus_luyben');
+	let aggressivenessVal = $state(1.0);
+	let bias = $state(50);
+	let amplitude = $state(25);
+	let hysteresisVal = $state(1.0);
+	let showAdvanced = $state(false);
 	let loading = $state(false);
 	let hasActiveSession = $state(false);
 
@@ -108,7 +142,17 @@
 		if (!$deviceId) return;
 		loading = true;
 		try {
-			await startAutotune($deviceId, targetTemp);
+			const params: AutotuneStartParams = { targetTemp, mode };
+			if (mode === 'relay') {
+				params.tuningMethod = tuningMethod;
+			} else {
+				params.aggressiveness = aggressivenessVal;
+			}
+			// Only send advanced params if they differ from defaults
+			if (bias !== 50) params.bias = bias;
+			if (amplitude !== 25) params.amplitude = amplitude;
+			if (hysteresisVal !== 1.0) params.hysteresis = hysteresisVal;
+			await startAutotune($deviceId, params);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			notifications.add(`Failed to start autotune: ${msg}`, 'error');
@@ -131,6 +175,40 @@
 	}
 
 	let applying = $state(false);
+	let showTuningDetails = $state(false);
+
+	const qualityBadge = $derived.by(() => {
+		const q = autotuneState.results?.quality;
+		if (!q) return null;
+		switch (q) {
+			case 'good': return { label: 'Good', cls: 'bg-green-500/20 text-green-400 border-green-500/30' };
+			case 'acceptable': return { label: 'Acceptable', cls: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
+			case 'poor': return { label: 'Poor', cls: 'bg-red-500/20 text-red-400 border-red-500/30' };
+			case 'fallback': return { label: 'Fallback', cls: 'bg-gray-500/20 text-gray-400 border-gray-500/30' };
+			default: return null;
+		}
+	});
+
+	const tuningMethodLabel = $derived.by(() => {
+		const r = autotuneState.results;
+		if (!r) return '';
+		if (r.mode === 'step_response') return 'SIMC Step Response';
+		switch (r.tuning_method) {
+			case 'tyreus_luyben': return 'Tyreus-Luyben';
+			case 'zn_classic': return 'Z-N Classic';
+			case 'zn_some_overshoot': return 'Z-N Some Overshoot';
+			case 'zn_no_overshoot': return 'Z-N No Overshoot';
+			default: return r.tuning_method ?? '';
+		}
+	});
+
+	const durationLabel = $derived.by(() => {
+		const d = autotuneState.results?.duration;
+		if (d == null) return '';
+		const m = Math.floor(d / 60);
+		const s = Math.round(d % 60);
+		return `Completed in ${m}m ${s}s`;
+	});
 
 	async function handleApply() {
 		if (!$deviceId) return;
@@ -184,8 +262,128 @@
 					class="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
 				/>
 				<p class="mt-1 text-xs text-muted-foreground">
-					Temperature for relay test oscillation (150–250°C)
+					Temperature for auto-tune test (150–250°C)
 				</p>
+			</div>
+
+			<!-- Mode selector -->
+			<fieldset>
+				<legend class="mb-1 block text-sm font-medium text-foreground">Auto-Tune Mode</legend>
+				<div class="flex gap-3">
+					<label class="flex items-center gap-1.5 text-sm text-foreground">
+						<input type="radio" bind:group={mode} value="relay" disabled={autotuneState.isAutotuning}
+							class="accent-amber-500" />
+						Relay (Oscillation)
+					</label>
+					<label class="flex items-center gap-1.5 text-sm text-foreground">
+						<input type="radio" bind:group={mode} value="step_response" disabled={autotuneState.isAutotuning}
+							class="accent-amber-500" />
+						Step Response (SIMC)
+					</label>
+				</div>
+			</fieldset>
+
+			<!-- Mode-specific options -->
+			{#if mode === 'relay'}
+				<div>
+					<label for="autotune-method" class="mb-1 block text-sm font-medium text-foreground">
+						Tuning Method
+					</label>
+					<select
+						id="autotune-method"
+						bind:value={tuningMethod}
+						disabled={autotuneState.isAutotuning}
+						class="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
+					>
+						<option value="tyreus_luyben">Tyreus-Luyben (Conservative)</option>
+						<option value="zn_classic">Z-N Classic (Aggressive)</option>
+						<option value="zn_some_overshoot">Z-N Some Overshoot</option>
+						<option value="zn_no_overshoot">Z-N No Overshoot</option>
+					</select>
+				</div>
+			{:else}
+				<div>
+					<label for="autotune-aggressiveness" class="mb-1 block text-sm font-medium text-foreground">
+						Aggressiveness
+					</label>
+					<input
+						id="autotune-aggressiveness"
+						type="number"
+						min={0.1}
+						max={2.0}
+						step={0.1}
+						bind:value={aggressivenessVal}
+						disabled={autotuneState.isAutotuning}
+						class="w-full rounded-md border border-border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
+					/>
+					<p class="mt-1 text-xs text-muted-foreground">
+						Lower = more conservative, Higher = faster response (0.1–2.0)
+					</p>
+				</div>
+			{/if}
+
+			<!-- Advanced parameters (collapsible) -->
+			<div>
+				<button
+					type="button"
+					onclick={() => showAdvanced = !showAdvanced}
+					disabled={autotuneState.isAutotuning}
+					class="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+				>
+					{showAdvanced ? '▾' : '▸'} Advanced Parameters
+				</button>
+				{#if showAdvanced}
+					<div class="mt-2 space-y-2 rounded-md border border-border bg-background p-3">
+						<div>
+							<label for="autotune-bias" class="mb-1 block text-xs font-medium text-foreground">
+								Bias ({bias}%)
+							</label>
+							<input
+								id="autotune-bias"
+								type="range"
+								min={10}
+								max={90}
+								step={1}
+								bind:value={bias}
+								disabled={autotuneState.isAutotuning}
+								class="w-full accent-amber-500"
+							/>
+							<p class="text-xs text-muted-foreground">Relay center point (10–90%)</p>
+						</div>
+						<div>
+							<label for="autotune-amplitude" class="mb-1 block text-xs font-medium text-foreground">
+								Amplitude ({amplitude}%)
+							</label>
+							<input
+								id="autotune-amplitude"
+								type="range"
+								min={5}
+								max={45}
+								step={1}
+								bind:value={amplitude}
+								disabled={autotuneState.isAutotuning}
+								class="w-full accent-amber-500"
+							/>
+							<p class="text-xs text-muted-foreground">Relay output swing (5–45%)</p>
+						</div>
+						<div>
+							<label for="autotune-hysteresis" class="mb-1 block text-xs font-medium text-foreground">
+								Hysteresis ({hysteresisVal.toFixed(1)}°C)
+							</label>
+							<input
+								id="autotune-hysteresis"
+								type="number"
+								min={0.1}
+								max={5.0}
+								step={0.1}
+								bind:value={hysteresisVal}
+								disabled={autotuneState.isAutotuning}
+								class="w-full rounded-md border border-border bg-input px-3 py-2 text-xs text-foreground focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 disabled:opacity-50"
+							/>
+							<p class="text-xs text-muted-foreground">Relay switching deadband (0.1–5.0°C)</p>
+						</div>
+					</div>
+				{/if}
 			</div>
 
 			{#if autotuneState.isAutotuning}
@@ -196,7 +394,7 @@
 							<span class="text-sm font-medium {phaseColor}">{phaseLabel}</span>
 							{#if autotuneState.status.phase === 'RUNNING' && autotuneState.status.stepCount > 0}
 								<span class="text-xs text-muted-foreground">
-									Step {autotuneState.status.stepCount} of ~15
+									Step {autotuneState.status.stepCount} of {autotuneState.status.totalSteps ?? 12}
 								</span>
 							{/if}
 						</div>
@@ -223,7 +421,7 @@
 							</span>
 						</div>
 
-						{#if autotuneState.status.phase === 'ERROR' && autotuneState.status.error}
+						{#if (autotuneState.status.phase === 'ERROR' || autotuneState.status.phase === 'FAILED') && autotuneState.status.error}
 							<div class="rounded-md border border-red-500/30 bg-red-500/10 px-2 py-1 text-xs text-red-400">
 								{autotuneState.status.error}
 							</div>
@@ -251,15 +449,28 @@
 			{/if}
 
 			{#if autotuneState.results && !autotuneState.isAutotuning}
-				<!-- Autotune results with comparison table -->
+				<!-- Autotune results with quality metrics and comparison table -->
 				<div class="space-y-3 rounded-md border border-green-500/30 bg-green-500/10 p-3">
+					<!-- Quality badge and method -->
+					{#if qualityBadge}
+						<span class="inline-block rounded-full border px-2 py-0.5 text-xs font-medium {qualityBadge.cls}">
+							{qualityBadge.label}
+						</span>
+					{/if}
+					{#if tuningMethodLabel}
+						<p class="text-xs text-muted-foreground">Method: {tuningMethodLabel}</p>
+					{/if}
+					{#if durationLabel}
+						<p class="text-xs text-muted-foreground">{durationLabel}</p>
+					{/if}
+
 					<h3 class="text-sm font-semibold text-green-400">Recommended PID Parameters</h3>
 
 					<table class="w-full text-sm">
 						<thead>
 							<tr class="text-xs text-muted-foreground">
 								<th class="pb-1 text-left font-medium">Parameter</th>
-								<th class="pb-1 text-right font-medium">Current</th>
+								<th class="pb-1 text-right font-medium">Original</th>
 								<th class="pb-1 text-right font-medium">Recommended</th>
 							</tr>
 						</thead>
@@ -267,7 +478,7 @@
 							<tr>
 								<td class="py-0.5">Kp</td>
 								<td class="py-0.5 text-right text-muted-foreground">
-									{$telemetry?.Kp != null ? $telemetry.Kp.toFixed(2) : '—'}
+									{autotuneState.results.original_kp != null ? autotuneState.results.original_kp.toFixed(2) : ($telemetry?.Kp != null ? $telemetry.Kp.toFixed(2) : '—')}
 								</td>
 								<td class="py-0.5 text-right font-medium text-green-400">
 									{autotuneState.results.Kp.toFixed(2)}
@@ -276,7 +487,7 @@
 							<tr>
 								<td class="py-0.5">Ki</td>
 								<td class="py-0.5 text-right text-muted-foreground">
-									{$telemetry?.Ki != null ? $telemetry.Ki.toFixed(4) : '—'}
+									{autotuneState.results.original_ki != null ? autotuneState.results.original_ki.toFixed(4) : ($telemetry?.Ki != null ? $telemetry.Ki.toFixed(4) : '—')}
 								</td>
 								<td class="py-0.5 text-right font-medium text-green-400">
 									{autotuneState.results.Ki.toFixed(4)}
@@ -285,7 +496,7 @@
 							<tr>
 								<td class="py-0.5">Kd</td>
 								<td class="py-0.5 text-right text-muted-foreground">
-									{$telemetry?.Kd != null ? $telemetry.Kd.toFixed(2) : '—'}
+									{autotuneState.results.original_kd != null ? autotuneState.results.original_kd.toFixed(2) : ($telemetry?.Kd != null ? $telemetry.Kd.toFixed(2) : '—')}
 								</td>
 								<td class="py-0.5 text-right font-medium text-green-400">
 									{autotuneState.results.Kd.toFixed(2)}
@@ -293,6 +504,69 @@
 							</tr>
 						</tbody>
 					</table>
+
+					<!-- Tuning details (collapsible) -->
+					{#if autotuneState.results.mode !== 'step_response' && (autotuneState.results.oscillation_period != null || autotuneState.results.ultimate_gain != null)}
+						<div>
+							<button
+								type="button"
+								onclick={() => showTuningDetails = !showTuningDetails}
+								class="text-xs text-muted-foreground hover:text-foreground"
+							>
+								{showTuningDetails ? '▾' : '▸'} Tuning Details
+							</button>
+							{#if showTuningDetails}
+								<div class="mt-1 space-y-1 text-xs text-muted-foreground">
+									{#if autotuneState.results.oscillation_period != null}
+										<p>Oscillation Period: {autotuneState.results.oscillation_period.toFixed(1)}s</p>
+									{/if}
+									{#if autotuneState.results.oscillation_amplitude != null}
+										<p>Oscillation Amplitude: {autotuneState.results.oscillation_amplitude.toFixed(2)}°C</p>
+									{/if}
+									{#if autotuneState.results.ultimate_gain != null}
+										<p>Ultimate Gain (Ku): {autotuneState.results.ultimate_gain.toFixed(3)}</p>
+									{/if}
+									{#if autotuneState.results.consistency_pct != null}
+										<p>Consistency: {autotuneState.results.consistency_pct.toFixed(1)}%</p>
+									{/if}
+									{#if autotuneState.results.asymmetry_ratio != null}
+										<p>Asymmetry Ratio: {autotuneState.results.asymmetry_ratio.toFixed(3)}</p>
+									{/if}
+								</div>
+							{/if}
+						</div>
+					{/if}
+
+					{#if autotuneState.results.mode === 'step_response' && (autotuneState.results.process_gain_K != null || autotuneState.results.time_constant_tau != null)}
+						<div>
+							<button
+								type="button"
+								onclick={() => showTuningDetails = !showTuningDetails}
+								class="text-xs text-muted-foreground hover:text-foreground"
+							>
+								{showTuningDetails ? '▾' : '▸'} Process Model (FOPDT)
+							</button>
+							{#if showTuningDetails}
+								<div class="mt-1 space-y-1 text-xs text-muted-foreground">
+									{#if autotuneState.results.process_gain_K != null}
+										<p>Process Gain K: {autotuneState.results.process_gain_K.toFixed(4)}</p>
+									{/if}
+									{#if autotuneState.results.time_constant_tau != null}
+										<p>Time Constant τ: {autotuneState.results.time_constant_tau.toFixed(1)}s</p>
+									{/if}
+									{#if autotuneState.results.dead_time_theta != null}
+										<p>Dead Time θ: {autotuneState.results.dead_time_theta.toFixed(1)}s</p>
+									{/if}
+									{#if autotuneState.results.aggressiveness != null}
+										<p>Aggressiveness: {autotuneState.results.aggressiveness.toFixed(2)}</p>
+									{/if}
+									{#if autotuneState.results.simc_tau_c != null}
+										<p>Closed-loop τc: {autotuneState.results.simc_tau_c.toFixed(1)}s</p>
+									{/if}
+								</div>
+							{/if}
+						</div>
+					{/if}
 
 					<div class="flex gap-2">
 						<button

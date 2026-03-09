@@ -8,12 +8,42 @@ export interface AutotuneStatus {
 	stepCount: number;
 	progress: number;
 	error?: string;
+	mode?: string;
+	totalSteps?: number;
 }
 
 export interface AutotuneResults {
 	Kp: number;
 	Ki: number;
 	Kd: number;
+	mode?: string;
+	tuning_method?: string;
+	quality?: 'good' | 'acceptable' | 'fallback' | 'poor';
+	original_kp?: number;
+	original_ki?: number;
+	original_kd?: number;
+	oscillation_period?: number;
+	oscillation_amplitude?: number;
+	ultimate_gain?: number;
+	consistency_pct?: number;
+	asymmetry_ratio?: number;
+	hysteresis_correction?: number;
+	process_gain_K?: number;
+	time_constant_tau?: number;
+	dead_time_theta?: number;
+	aggressiveness?: number;
+	simc_tau_c?: number;
+	duration?: number;
+}
+
+export interface AutotuneStartParams {
+	targetTemp: number;
+	mode?: 'relay' | 'step_response';
+	tuningMethod?: string;
+	bias?: number;
+	amplitude?: number;
+	hysteresis?: number;
+	aggressiveness?: number;
 }
 
 // --- Reactive state (Svelte 5 runes) ---
@@ -23,11 +53,13 @@ export const autotuneState = $state<{
 	results: AutotuneResults | null;
 	isAutotuning: boolean;
 	targetTemp: number | null;
+	mode: 'relay' | 'step_response';
 }>({
 	status: null,
 	results: null,
 	isAutotuning: false,
-	targetTemp: null
+	targetTemp: null,
+	mode: 'relay'
 });
 
 // --- WebSocket event subscription ---
@@ -44,27 +76,47 @@ export function handleAutotuneEvent(msg: { autotune: { type: string; data: Recor
 		const phase = String(data.phase ?? data.state ?? '').toUpperCase();
 		const stepCount = typeof data.current_step === 'number' ? data.current_step
 			: typeof data.step_count === 'number' ? data.step_count : 0;
+		const mode = typeof data.mode === 'string' ? data.mode : undefined;
+		const totalSteps = typeof data.total_steps === 'number' ? data.total_steps : undefined;
 
-		// Estimate progress: ~15 relay cycles expected
+		// Determine default total steps based on mode
+		const effectiveTotalSteps = totalSteps ?? (mode === 'step_response' ? 4 : 12);
+
+		// Estimate progress using total_steps from ESP32
 		let progress: number;
-		if (phase === 'COMPLETE' || phase === 'ANALYZING') {
-			progress = phase === 'COMPLETE' ? 100 : 95;
+		const stepResponsePhases = ['STEP_BASELINE', 'STEP_UP', 'STEP_SETTLE', 'STEP_ANALYZE'];
+		if (phase === 'COMPLETE') {
+			progress = 100;
+		} else if (phase === 'ANALYZING' || phase === 'STEP_ANALYZE') {
+			progress = 95;
+		} else if (stepResponsePhases.includes(phase)) {
+			// Phase-based progress for step response
+			const phaseIdx = stepResponsePhases.indexOf(phase);
+			progress = Math.min(Math.round(((phaseIdx + 1) / (stepResponsePhases.length + 1)) * 100), 95);
 		} else {
-			progress = Math.min(Math.round((stepCount / 15) * 100), 95);
+			progress = Math.min(Math.round((stepCount / effectiveTotalSteps) * 100), 95);
 		}
 
 		autotuneState.status = {
 			phase,
 			stepCount,
 			progress,
-			error: typeof data.error === 'string' ? data.error : undefined
+			error: typeof data.error === 'string' ? data.error : undefined,
+			mode,
+			totalSteps: effectiveTotalSteps
 		};
 
+		// Update mode in state if reported
+		if (mode === 'relay' || mode === 'step_response') {
+			autotuneState.mode = mode;
+		}
+
 		// Update isAutotuning based on phase
-		const activePhases = ['HEATING', 'STABILIZING', 'RUNNING', 'ANALYZING'];
+		const activePhases = ['HEATING', 'STABILIZING', 'RUNNING', 'ANALYZING',
+			'STEP_BASELINE', 'STEP_UP', 'STEP_SETTLE', 'STEP_ANALYZE'];
 		autotuneState.isAutotuning = activePhases.includes(phase);
 
-		if (phase === 'ERROR' || phase === 'COMPLETE') {
+		if (phase === 'ERROR' || phase === 'COMPLETE' || phase === 'FAILED') {
 			autotuneState.isAutotuning = false;
 		}
 	} else if (type === 'results') {
@@ -74,7 +126,37 @@ export function handleAutotuneEvent(msg: { autotune: { type: string; data: Recor
 			: typeof data.Ki === 'number' ? data.Ki : 0;
 		const Kd = typeof data.recommended_kd === 'number' ? data.recommended_kd
 			: typeof data.Kd === 'number' ? data.Kd : 0;
-		autotuneState.results = { Kp, Ki, Kd };
+
+		const optNum = (key: string): number | undefined => {
+			const v = data[key];
+			return typeof v === 'number' ? v : undefined;
+		};
+		const optStr = (key: string): string | undefined => {
+			const v = data[key];
+			return typeof v === 'string' ? v : undefined;
+		};
+
+		autotuneState.results = {
+			Kp, Ki, Kd,
+			mode: optStr('mode'),
+			tuning_method: optStr('tuning_method'),
+			quality: optStr('quality') as AutotuneResults['quality'],
+			original_kp: optNum('original_kp'),
+			original_ki: optNum('original_ki'),
+			original_kd: optNum('original_kd'),
+			oscillation_period: optNum('oscillation_period'),
+			oscillation_amplitude: optNum('oscillation_amplitude'),
+			ultimate_gain: optNum('ultimate_gain'),
+			consistency_pct: optNum('consistency_pct'),
+			asymmetry_ratio: optNum('asymmetry_ratio'),
+			hysteresis_correction: optNum('hysteresis_correction'),
+			process_gain_K: optNum('process_gain_K'),
+			time_constant_tau: optNum('time_constant_tau'),
+			dead_time_theta: optNum('dead_time_theta'),
+			aggressiveness: optNum('aggressiveness'),
+			simc_tau_c: optNum('simc_tau_c'),
+			duration: optNum('duration')
+		};
 	}
 }
 
@@ -92,16 +174,17 @@ export function destroyAutotuneSubscription() {
 
 // --- Actions ---
 
-export async function startAutotune(deviceId: string, targetTemp: number) {
+export async function startAutotune(deviceId: string, params: AutotuneStartParams) {
 	// The Start button is only visible after apply or dismiss, both of which
 	// already reset the ESP32 to IDLE.  Do NOT send stop here — the ESP32's
 	// stop handler unconditionally reverts PID values to pre-autotune originals,
 	// which would undo any previously applied autotune or manual PID changes.
-	autotuneState.targetTemp = targetTemp;
+	autotuneState.targetTemp = params.targetTemp;
+	autotuneState.mode = params.mode ?? 'relay';
 	autotuneState.status = { phase: 'HEATING', stepCount: 0, progress: 0 };
 	autotuneState.results = null;
 	autotuneState.isAutotuning = true;
-	await autotuneApi.start(deviceId, targetTemp);
+	await autotuneApi.start(deviceId, params);
 }
 
 export async function stopAutotune(deviceId: string) {
@@ -141,13 +224,29 @@ export async function fetchLatestAutotune(deviceId: string) {
 			latestPhase = String(data.phase ?? data.state ?? '').toUpperCase();
 			const stepCount = typeof data.current_step === 'number' ? data.current_step
 			: typeof data.step_count === 'number' ? data.step_count : 0;
+			const mode = typeof data.mode === 'string' ? data.mode : undefined;
+			const totalSteps = typeof data.total_steps === 'number' ? data.total_steps : undefined;
+			const effectiveTotalSteps = totalSteps ?? (mode === 'step_response' ? 4 : 12);
 
-			const activePhases = ['HEATING', 'STABILIZING', 'RUNNING', 'ANALYZING'];
+			const activePhases = ['HEATING', 'STABILIZING', 'RUNNING', 'ANALYZING',
+				'STEP_BASELINE', 'STEP_UP', 'STEP_SETTLE', 'STEP_ANALYZE'];
 			if (activePhases.includes(latestPhase)) {
-				const progress = latestPhase === 'ANALYZING' ? 95 : Math.min(Math.round((stepCount / 15) * 100), 95);
-				autotuneState.status = { phase: latestPhase, stepCount, progress };
+				const stepResponsePhases = ['STEP_BASELINE', 'STEP_UP', 'STEP_SETTLE', 'STEP_ANALYZE'];
+				let progress: number;
+				if (latestPhase === 'ANALYZING' || latestPhase === 'STEP_ANALYZE') {
+					progress = 95;
+				} else if (stepResponsePhases.includes(latestPhase)) {
+					const phaseIdx = stepResponsePhases.indexOf(latestPhase);
+					progress = Math.min(Math.round(((phaseIdx + 1) / (stepResponsePhases.length + 1)) * 100), 95);
+				} else {
+					progress = Math.min(Math.round((stepCount / effectiveTotalSteps) * 100), 95);
+				}
+				autotuneState.status = { phase: latestPhase, stepCount, progress, mode, totalSteps: effectiveTotalSteps };
 				autotuneState.isAutotuning = true;
 				autotuneState.targetTemp = typeof data.target_temperature === 'number' ? data.target_temperature : null;
+				if (mode === 'relay' || mode === 'step_response') {
+					autotuneState.mode = mode;
+				}
 			}
 		}
 	} catch {
@@ -169,7 +268,37 @@ export async function fetchLatestAutotune(deviceId: string) {
 					: typeof data.Ki === 'number' ? data.Ki : 0;
 				const Kd = typeof data.recommended_kd === 'number' ? data.recommended_kd
 					: typeof data.Kd === 'number' ? data.Kd : 0;
-				autotuneState.results = { Kp, Ki, Kd };
+
+				const optNum = (key: string): number | undefined => {
+					const v = data[key];
+					return typeof v === 'number' ? v : undefined;
+				};
+				const optStr = (key: string): string | undefined => {
+					const v = data[key];
+					return typeof v === 'string' ? v : undefined;
+				};
+
+				autotuneState.results = {
+					Kp, Ki, Kd,
+					mode: optStr('mode'),
+					tuning_method: optStr('tuning_method'),
+					quality: optStr('quality') as AutotuneResults['quality'],
+					original_kp: optNum('original_kp'),
+					original_ki: optNum('original_ki'),
+					original_kd: optNum('original_kd'),
+					oscillation_period: optNum('oscillation_period'),
+					oscillation_amplitude: optNum('oscillation_amplitude'),
+					ultimate_gain: optNum('ultimate_gain'),
+					consistency_pct: optNum('consistency_pct'),
+					asymmetry_ratio: optNum('asymmetry_ratio'),
+					hysteresis_correction: optNum('hysteresis_correction'),
+					process_gain_K: optNum('process_gain_K'),
+					time_constant_tau: optNum('time_constant_tau'),
+					dead_time_theta: optNum('dead_time_theta'),
+					aggressiveness: optNum('aggressiveness'),
+					simc_tau_c: optNum('simc_tau_c'),
+					duration: optNum('duration')
+				};
 			}
 		} catch {
 			// No results available — that's fine
