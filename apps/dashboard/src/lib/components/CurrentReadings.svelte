@@ -39,12 +39,23 @@
 	});
 </script>
 
-<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
 	<!-- Bean Temperature -->
 	<div class="rounded-lg border border-border bg-card p-3">
 		<div class="text-xs font-medium text-muted-foreground">Bean Temp</div>
 		<div class="mt-1 text-2xl font-bold text-amber-400">
 			{fmt($telemetry?.beanTemp)}
+			<span class="text-sm font-normal text-muted-foreground">°C</span>
+		</div>
+	</div>
+
+	<!-- Setpoint -->
+	<div class="rounded-lg border border-border bg-card p-3">
+		<div class="text-xs font-medium text-muted-foreground">
+			SP{#if $telemetry?.controlMode === 1} <span class="text-amber-400">(PID)</span>{/if}
+		</div>
+		<div class="mt-1 text-2xl font-bold text-orange-400">
+			{fmt($telemetry?.setpoint)}
 			<span class="text-sm font-normal text-muted-foreground">°C</span>
 		</div>
 	</div>

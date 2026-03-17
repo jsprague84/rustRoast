@@ -30,6 +30,7 @@
 		const times = h.map((p) => p.timestamp - startTime);
 		const btData = h.map((p, i) => [times[i], p.telemetry.beanTemp]);
 		const etData = h.map((p, i) => [times[i], p.telemetry.envTemp]);
+		const spData = h.map((p, i) => [times[i], p.telemetry.setpoint ?? null]);
 		const heaterData = h.map((p, i) => [times[i], p.telemetry.heaterPWM]);
 		const fanData = h.map((p, i) => [times[i], Math.round(p.telemetry.fanPWM / 2.55)]); // normalize 0-255 to 0-100 for display
 
@@ -59,7 +60,7 @@
 			.map((p) => [p.time_seconds * 1000, p.target_temp]) ?? [];
 
 		// Dynamic Y-axis bounds with 10% padding
-		const allTemps = h.flatMap((p) => [p.telemetry.beanTemp, p.telemetry.envTemp]);
+		const allTemps = h.flatMap((p) => [p.telemetry.beanTemp, p.telemetry.envTemp, ...(p.telemetry.setpoint != null ? [p.telemetry.setpoint] : [])]);
 		if (profileData.length > 0) {
 			for (const [, temp] of profileData) {
 				allTemps.push(temp);
@@ -97,13 +98,14 @@
 		const graphicElements: Array<Record<string, unknown>> = [];
 		if (autotuneState.isAutotuning && autotuneState.status) {
 			const step = autotuneState.status.stepCount;
+			const total = autotuneState.status.totalSteps ?? 12;
 			const phase = autotuneState.status.phase.charAt(0) + autotuneState.status.phase.slice(1).toLowerCase();
 			graphicElements.push({
 				type: 'text',
-				right: 70,
+				left: 'center',
 				top: 8,
 				style: {
-					text: `AT: ${phase} (Step ${step}/~15)`,
+					text: `AT: ${phase} (Step ${step}/${total})`,
 					fill: '#f97316',
 					fontSize: 13,
 					fontWeight: 'bold'
@@ -113,7 +115,7 @@
 		} else if (autotuneState.results && !autotuneState.isAutotuning) {
 			graphicElements.push({
 				type: 'text',
-				right: 70,
+				left: 'center',
 				top: 8,
 				style: {
 					text: 'AT: Results Ready',
@@ -196,6 +198,14 @@
 					data: etData,
 					itemStyle: { color: '#60a5fa' },
 					lineStyle: { width: 2 },
+					showSymbol: false
+				},
+				{
+					name: 'SP',
+					type: 'line',
+					data: spData,
+					itemStyle: { color: '#fb923c' },
+					lineStyle: { type: 'dashed' as const, width: 1.5 },
 					showSymbol: false
 				},
 				{
