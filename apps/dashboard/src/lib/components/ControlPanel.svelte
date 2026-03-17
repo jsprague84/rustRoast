@@ -10,15 +10,22 @@
 	let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 	let synced = false;
 
-	// Sync values from telemetry only on first mount
+	let isAutoMode = $derived($telemetry?.controlMode === 1);
+
+	// Sync values from telemetry on first mount (manual controls)
+	// and continuously sync heater value in auto mode (PID-driven)
 	$effect(() => {
 		const t = $telemetry;
-		if (t && !synced) {
+		if (!t) return;
+		if (!synced) {
 			setpointValue = t.setpoint ?? 200;
 			fanValue = t.fanPWM ?? 128;
 			heaterValue = t.heaterPWM ?? 0;
 			heaterEnabled = t.heaterEnable === 1;
 			synced = true;
+		} else if (isAutoMode) {
+			// In auto mode, PID controls the heater — keep slider in sync
+			heaterValue = t.heaterPWM ?? 0;
 		}
 	});
 
@@ -106,7 +113,9 @@
 
 	<!-- Heater PWM -->
 	<div>
-		<label for="heater-slider" class="text-xs font-medium text-muted-foreground">Heater ({heaterValue}%)</label>
+		<label for="heater-slider" class="text-xs font-medium text-muted-foreground">
+			Heater ({heaterValue}%){#if isAutoMode} <span class="text-amber-400">(PID)</span>{/if}
+		</label>
 		<input
 			id="heater-slider"
 			type="range"
@@ -114,7 +123,7 @@
 			oninput={onHeaterChange}
 			min="0"
 			max="100"
-			disabled={!$deviceId}
+			disabled={!$deviceId || isAutoMode}
 			class="mt-1 w-full accent-red-500 disabled:opacity-40"
 		/>
 	</div>
